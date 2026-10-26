@@ -15,13 +15,13 @@ Page({
     mode: 'demo', view: 'street', overview: false, walk: 0, pins: [], posts: [],
     selected: null, cardVisible: true, expanded: false, busy: false,
     hasPosition: true, latitude: demo.origin.latitude, longitude: demo.origin.longitude,
-    markers: [], circles: [], following: true, locationLabel: '演示街区',
-    locationDetail: '虚构场景 · 非贸大实景', gpsStatus: '未开启定位',
-    caption: '虚构街区 · 模拟步行', lookHint: true, stageHeight: 600, canvasHeight: 558,
+    markers: [], circles: [], following: true, gpsStatus: '未开启定位',
+    sceneContext:'演示街区 · 虚构场景',mapNotice:'',mapNoticeAction:'',
+    lookHint: true, stageHeight: 600, canvasHeight: 558,
     sceneWidth: 390, sceneFrame: '', cloudConnected: false, cloudStatus: '联机未连接', privacyVisible:false,
     mapScale:18,syncState:'idle',syncBusy:false,emptyLabel:'看看附近',nearbyLabel:'附近留话',selectedIndex:0,nearbyCount:0,cardMaxHeight:210,
     sheetVisible:false,sheetTitle:'附近留话',sheetSubtitle:'',sheetRows:[],sheetSort:'heat',sheetMaxHeight:280,
-    selectedGroupCount:0,selectedHeatLabel:'',heatLegend:false
+    selectedGroupCount:0,selectedHeatLabel:''
   },
   onLoad() { this._yaw = 0; this._selectedId = 'stairs'; this._cloudPosts = []; this._position = demo.position(0); this.resizeStage() },
   onShow() {
@@ -120,21 +120,31 @@ Page({
       const id = this._markerKeys.get(group.id)
       this._markerGroups.set(id,group)
       return { id,latitude:group.latitude,longitude:group.longitude,iconPath:group.iconPath,
-        width:group.width,height:group.height,anchor:{ x:.5,y:.5 },zIndex:group.active ? 100 : group.tier,
+        width:group.width,height:group.height,anchor:group.anchor,zIndex:group.active ? 100 : group.tier,
         'aria-label':group.count + '条留话，' + group.heatLabel }
     })
+    // Both use native markers so their order is explicit. Never displace a post to reveal the user.
+    if (mode === 'live' && good) markers.push({ id:0,latitude:position.latitude,longitude:position.longitude,
+      iconPath:'/assets/map-pins/user-location.png',width:24,height:24,anchor:{ x:.5,y:.5 },
+      zIndex:10000,alpha:age > geo.MAX_AGE ? .45 : 1,'aria-label':'我的当前位置' })
     const selectedGroup = (this.data.view === 'street' ? this._streetGroups || [] : groups).find(group => group.postIds.includes(this._selectedId))
     const count = nearby.length,index = nearby.findIndex(post => post.id === this._selectedId)
+    let mapNotice = '',mapNoticeAction = ''
+    if (mode === 'live') {
+      if (!good || age > geo.MAX_AGE) { mapNotice = '位置已过期 · 点此重新定位'; mapNoticeAction = 'recenter' }
+      else if (error > 30) { mapNotice = '定位较弱 · 点此查看原因'; mapNoticeAction = 'location' }
+      else if (count && this.data.syncState === 'join') { mapNotice = '加入试用，发现附近留话'; mapNoticeAction = 'connect' }
+      else if (count && this.data.syncState === 'error') { mapNotice = '附近暂未更新 · 点此重试'; mapNoticeAction = 'refresh' }
+    }
     const emptyLabel = this.data.syncState === 'loading' ? '正在看看附近…' : this.data.syncState === 'join' ? '加入现场留话 →' :
       this.data.syncState === 'error' ? '暂未刷新，点此重试 ↻' : '这里还没有留话，留第一句 ＋'
     const patch = { posts, selected, hasPosition: good, markers,
-      gpsStatus, locationLabel: mode === 'demo' ? '演示街区' : '我的位置',
-      locationDetail: mode === 'demo' ? '虚构场景 · 非贸大实景' : gpsStatus + (this.data.syncState === 'error' ? ' · 暂未刷新' : ''),
+      gpsStatus,mapNotice,mapNoticeAction,
+      sceneContext:mode === 'demo' ? '演示街区 · 虚构场景' : this.data.view === 'street' ? '3D 空间示意 · 非真实建筑' : '',
       emptyLabel,nearbyCount:count,selectedIndex:index + 1,nearbyLabel:count ? '附近 ' + count + ' 条' : '附近留话',
       selectedGroupCount:selectedGroup ? selectedGroup.count : 0,selectedHeatLabel:selected ? mapPoints.heat(selected).label : '',
-      caption: mode === 'demo' ? '虚构街区 · 模拟步行' : this.data.view === 'map' ? '真实定位 · ' + this.data.cloudStatus : '定位空间示意 · 实景模型待接入',
       circles: mode === 'live' && good && error < 1000 ? [{ latitude: position.latitude, longitude: position.longitude,
-        radius: error, color: '#858b9980', fillColor: '#858b991a', strokeWidth: 1 }] : [] }
+        radius: error, color: '#348fdb55', fillColor: '#348fdb14', strokeWidth: 1 }] : [] }
     if (good && this.data.following) { patch.latitude = position.latitude; patch.longitude = position.longitude }
     if (this.data.sheetVisible) Object.assign(patch,this.sheetPatch(posts))
     // Do not re-send the entire native marker array when only GPS labels change.
@@ -236,6 +246,45 @@ Page({
     }).finally(() => { if (generation === (this._syncGeneration || 0)) this._locating = false })
   },
   locationDetails() { wx.navigateTo({ url:'/pages/location-status/index' }) },
+  more() {
+    if (this._menuOpen) return
+    const demoMode = this.data.mode === 'demo'
+    const actions = [
+      { title:demoMode ? '刷新演示留话' : '刷新附近留话',run:() => this.refreshNearby() },
+      { title:demoMode ? (this.data.overview ? '切换街景视角' : '切换俯视视角') : this.data.view === 'map' ? '查看 3D 空间示意' : '返回二维地图',run:() => this.toggleView() },
+      { title:'地图上的逗号',run:() => this.showHeatInfo() },
+      { title:demoMode ? '演示说明' : '定位与连接状态',run:() => this.showMapStatus() },
+      { title:'切换体验模式',run:() => this.chooseMode() }
+    ]
+    if (!demoMode && this.data.view === 'map') actions.splice(2,0,{ title:'地图缩放',run:() => this.showMapZoom() })
+    this._menuOpen = true
+    wx.showActionSheet({ itemList:actions.map(action => action.title),
+      success:result => { const action = actions[result.tapIndex]; if (action) wx.nextTick(() => { if (this._visible) action.run() }) },
+      complete:() => { this._menuOpen = false } })
+  },
+  showMapZoom() {
+    wx.showActionSheet({ itemList:['放大地图','缩小地图'],success:result => {
+      if (this._visible && this.data.view === 'map') this.zoom(result.tapIndex === 0 ? 1 : -1)
+    } })
+  },
+  showHeatInfo() {
+    wx.showModal({ title:'地图上的逗号',content:'蓝点是你，逗号是留话。针脚末端是留话位置，缩放时固定在原坐标；蓝点始终置顶。\n逗号越深、略大，互动越热闹；数字是留话数量。附近列表可切换“最新”。',showCancel:false })
+  },
+  showMapStatus() {
+    if (this.data.mode === 'demo') {
+      wx.showModal({ title:'演示说明',content:'当前街区和留话为虚构演示，内容只保存在本机。可在“切换体验模式”中使用手机真实定位。',showCancel:false })
+      return
+    }
+    wx.showModal({ title:'定位与连接',content:'定位：'+this.data.gpsStatus+'\n内容：'+(this.data.syncBusy ? '正在刷新' : this.data.cloudStatus)+'\n地图：'+(this.data.following ? '跟随当前位置' : '自由浏览'),
+      confirmText:'定位详情',cancelText:'关闭',success:result => { if (result.confirm && this._visible) this.locationDetails() } })
+  },
+  noticeAction() {
+    const action = this.data.mapNoticeAction
+    if (action === 'recenter') this.recenter()
+    else if (action === 'location') this.locationDetails()
+    else if (action === 'connect') api.openConnect()
+    else if (action === 'refresh') this.refreshNearby()
+  },
   privacyVisibility(event) {
     this.setData({ privacyVisible:event.detail.visible }, () => { if (!event.detail.visible) this.initCanvas() })
   },
@@ -291,7 +340,7 @@ Page({
   },
   showSheet(ids) {
     this._sheetIds = ids ? ids.slice() : null
-    this.setData(Object.assign({ sheetVisible:true,cardVisible:false,expanded:false,heatLegend:false },this.sheetPatch(this.data.posts)))
+    this.setData(Object.assign({ sheetVisible:true,cardVisible:false,expanded:false },this.sheetPatch(this.data.posts)))
     this.refresh()
   },
   sheetPatch(posts) {
@@ -317,7 +366,7 @@ Page({
     if (!this.data.posts.some(post => post.id === id)) return
     this._selectedId = id
     this._sheetIds = null
-    this.setData({ cardVisible:true,expanded:false,sheetVisible:false,sheetRows:[],heatLegend:false }); this.refresh()
+    this.setData({ cardVisible:true,expanded:false,sheetVisible:false,sheetRows:[] }); this.refresh()
   },
   selectedGroup() {
     const groups = this.data.view === 'map' ? this._mapGroups : this._streetGroups
@@ -325,7 +374,6 @@ Page({
     if (group) this.showSheet(group.postIds)
   },
   closeSheet() { this._sheetIds = null; this.setData({ sheetVisible:false,sheetRows:[] }) },
-  toggleHeatLegend() { this.setData({ heatLegend:!this.data.heatLegend }) },
   stopTap() {},
   nextPost() {
     const posts = this.data.posts.filter(post => geo.distance(this._position,post)<=350)
@@ -333,8 +381,7 @@ Page({
     const index = posts.findIndex(post => post.id === this._selectedId)
     this.selectPost(posts[(index+1)%posts.length].id)
   },
-  zoom(event) {
-    const step = Number(event.currentTarget.dataset.step)
+  zoom(step) {
     this.setData({ mapScale:Math.max(14,Math.min(20,this.data.mapScale + step)) },() => this.refresh())
   },
   refreshNearby() {
@@ -343,7 +390,7 @@ Page({
     if (!geo.valid(this._position)) { this.beginLocation(); return }
     this.syncNearby(true)
   },
-  closeCard() { this.setData({ cardVisible: false, expanded: false,heatLegend:false }); this.refresh() },
+  closeCard() { this.setData({ cardVisible: false, expanded: false }); this.refresh() },
   mapTap() { if (Date.now() >= (this._ignoreMapTapUntil || 0)) { this.closeSheet(); this.closeCard() } },
   mapChange(event) {
     const detail = event.detail || {},type = event.type === 'begin' || event.type === 'end' ? event.type : detail.type
