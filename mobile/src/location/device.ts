@@ -27,7 +27,7 @@ async function currentFix() {
   }
 }
 
-export type PositionDescription = { landmark: string; address: string; area?: string };
+export type PositionDescription = { landmark: string; address: string; area?: string; building?: string };
 
 export async function describePosition(point: Point): Promise<PositionDescription | null> {
   if (__DEV__) {

@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
-import { AccessibilityInfo, FlatList, Image, Pressable, ScrollView, StyleSheet, Text, View, type ImageSourcePropType } from 'react-native';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { AccessibilityInfo, Alert, FlatList, Image, Pressable, ScrollView, StyleSheet, Text, View, type ImageSourcePropType } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { router, usePathname } from 'expo-router';
+import { router, useFocusEffect, usePathname } from 'expo-router';
 import { Place, usePlaces } from '../../state/places';
 import { useProfile } from '../../state/profile';
+import { describePosition, readPosition, readPositionIfAllowed } from '../../location/device';
 import { Avatar } from '../../components/Avatar';
 import { colors, Loading, moods, Screen } from '../../components/ui';
 
@@ -115,6 +116,77 @@ function PlaceCard({ place, height, active }: { place: Place; height: number; ac
   </View>;
 }
 
+function DiscoverLocation() {
+  const [label, setLabel] = useState('定位中…');
+  const [diagnostic, setDiagnostic] = useState('');
+  const [busy, setBusy] = useState(true);
+  const [refresh, setRefresh] = useState(0);
+  const handledRefresh = useRef(0);
+
+  useFocusEffect(useCallback(() => {
+    let active = true;
+    const requested = refresh !== handledRefresh.current;
+    handledRefresh.current = refresh;
+    setBusy(true);
+    if (requested) setLabel('定位中…');
+
+    async function update() {
+      try {
+        const fix = await (requested ? readPosition() : readPositionIfAllowed());
+        if (!active) return;
+        if (!fix) {
+          setLabel('获取位置');
+          setDiagnostic('尚未获得定位权限。');
+          return;
+        }
+        const place = await describePosition(fix);
+        if (!active) return;
+        const area = place?.area || '';
+        const building = place?.building || '';
+        const accuracy = fix.accuracy;
+        const showBuilding = !!building && accuracy !== null && accuracy <= 15;
+        const buildingLabel = showBuilding
+          ? (area.includes(building) ? area : area && !building.includes(area) ? `${area} · ${building}` : building)
+          : '';
+        setLabel(buildingLabel || area || (place?.landmark ? `${place.landmark}附近` : place?.address) || '已定位');
+        if (__DEV__) {
+          const precision = accuracy === null ? '定位精度未知' : `定位误差约 ${Math.round(accuracy)} 米`;
+          const reason = place?.building === undefined
+            ? '本次地址结果没有楼栋字段，可能使用了系统地址或旧版接口。'
+            : !building ? '地图服务未返回楼栋名称。'
+            : showBuilding ? '已匹配楼栋。' : '已匹配楼栋，定位精度未达到 15 米的显示门槛。';
+          setDiagnostic(`${precision}。\n${reason}`);
+        }
+      } catch {
+        if (active) {
+          setLabel('重新定位');
+          setDiagnostic('本次未能获取位置。');
+        }
+      } finally {
+        if (active) setBusy(false);
+      }
+    }
+
+    void update();
+    return () => { active = false; };
+  }, [refresh]));
+
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`当前位置，${label}`}
+      accessibilityHint="轻点更新当前位置"
+      disabled={busy}
+      onPress={() => setRefresh(value => value + 1)}
+      onLongPress={__DEV__ && diagnostic ? () => Alert.alert('定位详情', diagnostic) : undefined}
+      style={styles.currentLocation}
+    >
+      <Ionicons name="location-outline" size={15} color={colors.accent} />
+      <Text numberOfLines={1} style={styles.locationName}>{label}</Text>
+    </Pressable>
+  );
+}
+
 export default function DiscoverScreen() {
   const store = usePlaces();
   const { profile, ready: profileReady } = useProfile();
@@ -131,7 +203,7 @@ export default function DiscoverScreen() {
         <Avatar uri={profile.avatar} size={34} />
         <Text numberOfLines={1} style={styles.profileName}>{profile.nickname}</Text>
       </Pressable>
-      <Text style={styles.demo}>本机体验</Text>
+      <DiscoverLocation />
     </View>
     {store.notice ? <Text style={styles.notice}>{store.notice}</Text> : null}
     <View style={styles.feed} onLayout={event => setHeight(event.nativeEvent.layout.height)}>
@@ -144,7 +216,8 @@ const styles = StyleSheet.create({
   header: { height: 65, paddingHorizontal: 23, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 16 },
   profile: { flexDirection: 'row', alignItems: 'center', gap: 9, minHeight: 44, flexShrink: 1, minWidth: 0 },
   profileName: { color: colors.text, fontSize: 15, fontWeight: '500', flexShrink: 1 },
-  demo: { color: colors.muted, fontSize: 11 },
+  currentLocation: { maxWidth: '56%', minHeight: 44, flexDirection: 'row', alignItems: 'center', gap: 5 },
+  locationName: { color: colors.muted, fontSize: 12, flexShrink: 1 },
   notice: { color: '#d3bf99', fontSize: 12, paddingHorizontal: 24 },
   feed: { flex: 1 },
   card: { flex: 1, borderRadius: 28, overflow: 'hidden' },

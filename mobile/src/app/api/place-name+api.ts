@@ -43,15 +43,15 @@ export async function POST(request: Request) {
       key, location: converted.locations, extensions: 'all', radius: '100',
     }, signal);
     if (!regeocode) throw new Error('Map address unavailable');
+    const building = label(regeocode.addressComponent?.building?.name);
     const area = label(regeocode.addressComponent?.neighborhood?.name)
-      || label(regeocode.addressComponent?.building?.name)
       || regeocode.aois?.map(item => label(item.name)).find(Boolean)
       || '';
     const landmark = (regeocode.pois ?? [])
       .filter(item => label(item.name) && item.distance && Number.isFinite(Number(item.distance)))
       .sort((a, b) => Number(a.distance) - Number(b.distance))
       .map(item => label(item.name))[0] || '';
-    return respond({ area, address: label(regeocode.formatted_address), landmark: area ? '' : landmark });
+    return respond({ area, building, address: label(regeocode.formatted_address), landmark: area ? '' : landmark });
   } catch {
     return respond({ error: 'Map lookup unavailable' }, 502);
   }

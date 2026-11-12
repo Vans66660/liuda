@@ -1,17 +1,30 @@
 import { useEffect, useState } from 'react';
-import { Linking, Platform, Text, View } from 'react-native';
+import { Text, View } from 'react-native';
 import * as Location from 'expo-location';
-import { readPosition, toFix } from '../location/device';
-import { atPoint, distanceMeters, type Fix, type Point } from '../location/geo';
-import { StreetViewPreview } from './StreetViewPreview';
-import RealPlaceMap from './RealPlaceMap';
+import { readPosition, readPositionIfAllowed, toFix } from '../location/device';
+import { type Fix, type Point } from '../location/geo';
+import { LiudaPositionMap } from './LiudaPositionMap';
 import { Action, ui } from './ui';
 
-export function LivePlacePosition({ point, location, onFix }: { point: Point; location: string; onFix: (fix: Fix | null) => void }) {
+export function LivePlacePosition({ point, onFix }: { point: Point; onFix: (fix: Fix | null) => void }) {
   const [fix, setFix] = useState<Fix | null>(null);
   const [tracking, setTracking] = useState(false);
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(true);
   const [notice, setNotice] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    readPositionIfAllowed().then(result => {
+      if (!active || !result) return;
+      setFix(result);
+      setTracking(true);
+    }).catch(() => {
+      if (active) setNotice('暂时无法定位，可以重新试一次。');
+    }).finally(() => {
+      if (active) setBusy(false);
+    });
+    return () => { active = false; };
+  }, []);
 
   useEffect(() => {
     if (!tracking) return;
@@ -50,27 +63,11 @@ export function LivePlacePosition({ point, location, onFix }: { point: Point; lo
     }
   }
 
-  async function directions() {
-    const destination = encodeURIComponent(`${point.latitude},${point.longitude}`);
-    const url = Platform.OS === 'ios'
-      ? `https://maps.apple.com/?daddr=${destination}&dirflg=w`
-      : `https://www.google.com/maps/dir/?api=1&destination=${destination}&travelmode=walking`;
-    try { await Linking.openURL(url); }
-    catch { setNotice('无法打开地图，请稍后重试。'); }
-  }
-
   return (
-    <View style={{ gap: 10 }}>
-      <RealPlaceMap point={point} fix={fix} />
-      <Text style={ui.body}>{fix ? `直线约 ${Math.round(distanceMeters(fix, point))} 米${atPoint(fix, point) ? ' · 已到场' : ''}` : '定位后查看距离'}</Text>
-      {location ? <Text style={ui.muted}>{location}</Text> : null}
-      {fix?.accuracy != null && <Text style={ui.muted}>定位精度约 {Math.round(fix.accuracy)} 米</Text>}
+    <View style={{ gap: 8 }}>
+      <LiudaPositionMap point={point} fix={fix} />
       {notice ? <Text accessibilityLiveRegion="polite" style={ui.muted}>{notice}</Text> : null}
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-        <Action secondary title={busy ? '正在定位…' : fix ? '刷新定位' : '定位我'} disabled={busy} onPress={locate} />
-        <Action secondary title="打开步行路线" onPress={directions} />
-      </View>
-      {__DEV__ && <StreetViewPreview key={`${point.latitude},${point.longitude}`} point={point} />}
+      {!fix && <Action secondary title={busy ? '正在定位…' : '定位我'} disabled={busy} onPress={locate} />}
     </View>
   );
 }
