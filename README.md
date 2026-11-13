@@ -15,10 +15,10 @@
 
 ## 快速启动
 
-App 源码位于 `feature/app-profile` 分支的 `mobile/` 目录。获得仓库访问权限并安装 Git 和 Node.js 24 后运行：
+App 源码位于默认分支 `main` 的 `mobile/` 目录。获得仓库访问权限并安装 Git 和 Node.js 24 后运行：
 
 ```sh
-git clone --branch feature/app-profile https://github.com/Vans66660/liuda.git
+git clone https://github.com/Vans66660/liuda.git
 cd liuda/mobile
 npm ci
 npx expo start --go
@@ -26,7 +26,7 @@ npx expo start --go
 
 用兼容 Expo SDK 58 的 Expo Go 扫描终端二维码。电脑与手机连接同一 Wi‑Fi。也可以在电脑上运行 `npm run web` 预览界面。
 
-[App 开发与真机验证](https://github.com/Vans66660/liuda/blob/feature/app-profile/mobile/README.md) · [协作指南](CONTRIBUTING.md)
+[App 开发与真机验证](mobile/README.md) · [协作指南](CONTRIBUTING.md)
 
 ## 历史原型
 

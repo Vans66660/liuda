@@ -1,7 +1,7 @@
 const geo = require('./geo')
+const markerStyle = require('./map-marker-style')
 const DAY = 86400000
-const COLORS = ['#555962','#292c33','#090b0f']
-const SIZES = [32,39,46]
+const { COLORS,SIZES,appearance } = markerStyle
 const safeCount = value => Number.isFinite(value) ? Math.max(0,Math.floor(value)) : 0
 
 function heat(post,now = Date.now()) {
@@ -17,11 +17,6 @@ function heat(post,now = Date.now()) {
   const tier = score >= 20 ? 3 : score >= 5 ? 2 : 1
   return { score,tier,color:COLORS[tier-1],size:SIZES[tier-1],
     label:['普通','有回应','热门'][tier-1],fresh:post.createdAt > 0 && now - post.createdAt >= 0 && now - post.createdAt < DAY }
-}
-function appearance(tier,count,active) {
-  const size = SIZES[tier-1],badge = count > 9 ? '9plus' : String(count)
-  return { width:size + (count > 1 ? 19 : 0) + 8,height:size + 8,
-    iconPath:'/assets/map-pins/h' + tier + '-n' + badge + (active ? '-selected' : '') + '.png' }
 }
 function pixel(point,scale) {
   const lat = Math.max(-85,Math.min(85,point.latitude)) * Math.PI / 180
@@ -58,7 +53,10 @@ function groups(posts,project,selectedId,cardVisible) {
       tier:hottest.tier,heatLabel:hottest.label,active },appearance(hottest.tier,bucket.length,active))
   })
 }
-function mapGroups(posts,scale,selectedId,cardVisible) { return groups(posts,post => pixel(post,scale),selectedId,cardVisible) }
+function mapGroups(posts,scale,selectedId,cardVisible) {
+  return groups(posts,post => pixel(post,scale),selectedId,cardVisible)
+    .map(group => Object.assign({},group,appearance(group.tier,group.count,group.active,true)))
+}
 function streetGroups(pins,posts,selectedId,cardVisible) {
   const visible = new Map(pins.filter(pin => pin.visible).map(pin => [pin.id,pin]))
   return groups(posts.filter(post => visible.has(post.id)),post => visible.get(post.id),selectedId,cardVisible)

@@ -1,6 +1,6 @@
 # 参与留答 App 开发
 
-按 [App 开发说明](https://github.com/Vans66660/liuda/blob/feature/app-profile/mobile/README.md) 启动手机预览。App 开发以 `feature/app-profile` 为基线，源码在 `mobile/`。日常任务从最新 App 分支创建专题分支，Pull Request 选择 App 分支作为目标。
+按 [App 开发说明](mobile/README.md) 启动手机预览。App 开发以 `main` 为基线，源码在 `mobile/`。日常任务从最新的 `main` 创建专题分支，Pull Request 以 `main` 为目标。
 
 | 工作 | 代码目录 |
 | --- | --- |
