@@ -6,6 +6,7 @@ import { router, useFocusEffect, usePathname } from 'expo-router';
 import { Place, usePlaces } from '../../state/places';
 import { useProfile } from '../../state/profile';
 import { describePosition, readPosition, readPositionIfAllowed } from '../../location/device';
+import { placeMediaUri } from '../../components/LeaveMedia';
 import { Avatar } from '../../components/Avatar';
 import { colors, Loading, moods, Screen } from '../../components/ui';
 
@@ -20,15 +21,17 @@ const viewabilityConfig = { itemVisiblePercentThreshold: 70 };
 function PlaceCard({ place, height, active }: { place: Place; height: number; active: boolean }) {
   const store = usePlaces();
   const palette = moods[place.mood];
-  const illustration = placeArt.get(place.id);
-  const hasIllustration = illustration !== undefined;
-  const artHeight = Math.min(200, Math.round(height * 0.29));
   const onsite = store.arrived.includes(place.id);
   const unlocked = onsite || place.participated;
+  const illustration = unlocked && place.media?.kind === 'photo'
+    ? { uri: placeMediaUri(place.media) }
+    : placeArt.get(place.id);
+  const hasIllustration = illustration !== undefined;
+  const artHeight = Math.min(200, Math.round(height * 0.29));
   const [closer, setCloser] = useState(false);
   const distance = closer ? Math.min(15, place.distance) : place.distance;
   const nearby = distance <= 25;
-  const available = Array.from(unlocked ? place.text : place.teaser.replace(/[.…]+$/, ''))
+  const available = Array.from(unlocked ? place.text || place.teaser : place.teaser.replace(/[.…]+$/, ''))
     .slice(0, unlocked ? undefined : nearby ? 22 : 9);
   const [revealed, setRevealed] = useState(0);
   const [reduceMotion, setReduceMotion] = useState<boolean | null>(null);

@@ -23,12 +23,12 @@
     "plugins": [
       "expo-router",
       "expo-font",
+      ["expo-camera", { "cameraPermission": "允许留答拍摄现场照片。", "recordAudioAndroid": false }],
+      ["expo-audio", { "microphonePermission": "允许留答录制现场语音。" }],
       [
         "expo-image-picker",
         {
-          "photosPermission": "选择照片以设置你的留答头像。",
-          "cameraPermission": false,
-          "microphonePermission": false
+          "photosPermission": "选择照片以设置你的留答头像。"
         }
       ],
       [

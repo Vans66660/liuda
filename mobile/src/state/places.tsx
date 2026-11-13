@@ -1,3 +1,4 @@
+import type { PlaceMedia } from '../components/LeaveMedia';
 import { atPoint, isPoint, type Fix, type Point } from '../location/geo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
@@ -9,6 +10,7 @@ export type Place = {
   location: string;
   distance: number;
   point?: Point;
+  media?: PlaceMedia;
   teaser: string;
   text: string;
   mood: 'sage' | 'sand' | 'blue';
@@ -53,7 +55,7 @@ type Store = State & {
   save: (id: string) => void;
   like: (id: string, fix?: Fix | null) => void;
   reply: (id: string, text: string, fix?: Fix | null) => void;
-  create: (name: string, location: string, text: string, point?: Point) => string;
+  create: (name: string, location: string, text: string, point?: Point, media?: PlaceMedia) => string;
 };
 const Context = createContext<Store | null>(null);
 const key = 'liuda-mobile-demo-v1';
@@ -64,6 +66,8 @@ function validPlace(value: unknown): value is Place {
   return ['id', 'name', 'location', 'teaser', 'text'].every(field => typeof (place as unknown as Record<string, unknown>)[field] === 'string')
     && ['sage', 'sand', 'blue'].includes(place.mood)
     && (place.point === undefined || isPoint(place.point))
+    && (place.media === undefined || (!!place.media && ['photo', 'voice'].includes(place.media.kind)
+      && typeof place.media.file === 'string' && /^leave-[a-z0-9-]+[.](jpg|m4a)$/.test(place.media.file)))
     && Number.isFinite(place.distance) && Number.isFinite(place.likes)
     && ['liked', 'participated', 'owned'].every(field => typeof (place as unknown as Record<string, unknown>)[field] === 'boolean')
     && Array.isArray(place.replies) && place.replies.every(reply => typeof reply.id === 'string' && typeof reply.text === 'string' && typeof reply.mine === 'boolean')
@@ -121,9 +125,9 @@ export function PlacesProvider({ children }: { children: React.ReactNode }) {
       return { ...place, participated: true, replies: [...place.replies, { id: Date.now() + '-' + Math.random(), text: text.trim(), mine: true }] };
     }) }));
   }
-  function create(name: string, location: string, text: string, point?: Point) {
+  function create(name: string, location: string, text: string, point?: Point, media?: PlaceMedia) {
     const id = 'local-' + Date.now() + '-' + Math.random().toString(36).slice(2);
-    const place: Place = { id, name: name.trim() || '现场留话', location: location.trim(), text: text.trim(), teaser: text.trim(), distance: 0, point, mood: 'sage', likes: 0, liked: false, participated: true, owned: true, replies: [] };
+    const place: Place = { id, name: name.trim() || '现场留话', location: location.trim(), text: text.trim(), teaser: text.trim() || (media?.kind === 'photo' ? '一张现场照片' : media?.kind === 'voice' ? '一段现场语音' : ''), distance: 0, point, media, mood: 'sage', likes: 0, liked: false, participated: true, owned: true, replies: [] };
     setState(current => ({ ...current, places: [place, ...current.places], arrived: point ? current.arrived : [...current.arrived, id] }));
     return id;
   }

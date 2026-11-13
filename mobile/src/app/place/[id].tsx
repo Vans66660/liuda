@@ -1,5 +1,6 @@
+import { placeMediaUri, VoicePlayback } from '../../components/LeaveMedia';
 import { useCallback, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Image, Pressable, StyleSheet, Text, View } from 'react-native';
 import { AlignedTextInput, KeyboardAlignedScrollView } from '../../components/KeyboardAlignedScrollView';
 import { router, useLocalSearchParams } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
@@ -39,7 +40,9 @@ export default function PlaceScreen() {
         {point && locationClue ? <Text style={ui.muted}>{locationClue}</Text> : null}
       </View>
       <View style={[ui.panel, { backgroundColor: palette.background }]}>
-        <Text style={[styles.originalText, { color: palette.ink }]}>{unlocked ? place.text : place.teaser}</Text>
+        {unlocked && place.media?.kind === 'photo' && <Image source={{ uri: placeMediaUri(place.media) }} style={styles.photo} resizeMode="contain" accessibilityLabel="现场照片" />}
+        {unlocked && place.media?.kind === 'voice' && <VoicePlayback uri={placeMediaUri(place.media)} />}
+        {(!unlocked || place.text) ? <Text style={[styles.originalText, { color: palette.ink }]}>{unlocked ? place.text : place.teaser}</Text> : null}
         <View style={styles.engagement}>
           <View style={styles.author}><Author mine={place.owned} original /></View>
           <Pressable accessibilityRole="button" accessibilityState={{ disabled: !onsite, selected: place.liked }} disabled={!onsite} onPress={() => store.like(place.id, fix)} accessibilityLabel={onsite ? (place.liked ? '取消点赞' : '点赞') : '点赞需到场'} style={styles.like}>
@@ -66,6 +69,7 @@ export default function PlaceScreen() {
 }
 const styles = StyleSheet.create({
   placeMeta: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  photo: { width: '100%', height: 250, borderRadius: 14, backgroundColor: '#101613' },
   originalText: { fontSize: 25, lineHeight: 37, fontWeight: '600' },
   engagement: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 4 },
   author: { flex: 1, minWidth: 0 },

@@ -2,19 +2,27 @@ import { useEffect, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { AlignedTextInput, KeyboardAlignedScrollView } from '../../components/KeyboardAlignedScrollView';
-import RealPlaceMap from '../../components/RealPlaceMap';
+import { LeaveMedia, savePlaceMedia, type MediaDraft } from '../../components/LeaveMedia';
 import { router, usePathname } from 'expo-router';
 import { describePosition, readPosition, readPositionIfAllowed, type PositionDescription } from '../../location/device';
 import { usableFix, type Fix } from '../../location/geo';
 import { usePlaces } from '../../state/places';
 import { Action, colors, Loading, Screen, ui } from '../../components/ui';
 
+const modes = [
+  { id: 'photo', label: '拍照' },
+  { id: 'voice', label: '语音' },
+  { id: 'text', label: '文字' },
+] as const;
+
 export default function LeaveScreen() {
   const store = usePlaces();
   const [name, setName] = useState('');
   const [location, setLocation] = useState('');
   const [text, setText] = useState('');
-  const [naming, setNaming] = useState(false);
+  const [mode, setMode] = useState<typeof modes[number]['id']>('photo');
+  const [drafts, setDrafts] = useState<Partial<Record<MediaDraft['kind'], MediaDraft>>>({});
+  const draft = mode === 'text' ? undefined : drafts[mode];
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState('');
@@ -54,6 +62,7 @@ export default function LeaveScreen() {
   }
 
   async function publish() {
+    if (busy || (mode === 'text' ? !text.trim() : !draft)) return;
     setBusy(true);
     setNotice('');
     try {
@@ -63,8 +72,9 @@ export default function LeaveScreen() {
         setNotice('定位还不够准。可以走到开阔处，再试一次。');
         return;
       }
-      const id = store.create(name, location, text, { latitude: fix.latitude, longitude: fix.longitude });
-      setName(''); setLocation(''); setText(''); setDetailsOpen(false); setNaming(false);
+      const media = draft ? savePlaceMedia(draft) : undefined;
+      const id = store.create(name, location, mode === 'text' ? text : '', { latitude: fix.latitude, longitude: fix.longitude }, media);
+      setName(''); setLocation(''); setText(''); setDetailsOpen(false); setDrafts({});
       router.push({ pathname: '/place/[id]', params: { id } });
     } catch (error) {
       setNotice(error instanceof Error ? error.message : '无法获取位置，请重试。');
@@ -73,50 +83,58 @@ export default function LeaveScreen() {
     }
   }
   if (!store.ready) return <Loading />;
-  return <Screen><KeyboardAlignedScrollView contentContainerStyle={ui.content}>
-      <Text style={ui.title}>想在这里留句话？</Text>
-      <View style={styles.position}>
-        <View style={styles.positionRow}>
-          <Ionicons name="location-outline" size={20} color={colors.accent} />
-          <View style={styles.positionText}>
-            <Text style={styles.positionTitle}>当前位置</Text>
-            <Text style={ui.muted}>
-              {locating ? '正在定位…' : fix ? name.trim() || description?.area || description?.address || '已定位' : '等待获取位置'}
-            </Text>
-            {fix && !name.trim() && description?.landmark ? <Text style={ui.muted}>附近地标 · {description.landmark}</Text> : null}
-            {fix?.accuracy != null && <Text style={ui.muted}>精度约 {Math.round(fix.accuracy)} 米</Text>}
-          </View>
-          <Pressable accessibilityRole="button" disabled={locating || busy} onPress={locate} style={styles.locate}>
-            <Text style={styles.locateText}>{fix ? '刷新' : '获取位置'}</Text>
-          </Pressable>
-        </View>
-        {fix && <RealPlaceMap point={fix} fix={fix} currentOnly />}
-        <Pressable accessibilityRole="button" accessibilityState={{ expanded: naming }} onPress={() => setNaming(open => !open)} style={styles.locate}>
-          <Text style={styles.locateText}>{naming ? '完成' : name.trim() ? '修改地点名' : '补充或纠正地点名'}</Text>
-        </Pressable>
-        {naming && <AlignedTextInput value={name} onChangeText={setName} maxLength={40} placeholder="输入小区、建筑或店铺名称" placeholderTextColor={colors.muted} style={ui.input} accessibilityLabel="实际地点名（选填）" />}
-      </View>
-      <View>
-        <AlignedTextInput value={text} onChangeText={setText} multiline maxLength={300} placeholder="一个吐槽、提醒，或者一句玩笑……" placeholderTextColor={colors.muted} style={[ui.input, { minHeight: 150 }]} textAlignVertical="top" accessibilityLabel="留话内容" />
-        <Text style={[ui.muted, { textAlign: 'right', marginTop: 8 }]}>{text.length} / 300</Text>
-      </View>
-      <Pressable accessibilityRole="button" accessibilityState={{ expanded: detailsOpen }} onPress={() => setDetailsOpen(open => !open)} style={{ minHeight: 44, justifyContent: 'center' }}>
-        <Text style={ui.muted}>{detailsOpen ? '收起地点线索' : '＋ 补充地点线索（选填）'}</Text>
+  const placeLabel = locating ? '定位中…' : fix
+    ? name.trim() || description?.area || description?.landmark || description?.address || '当前位置'
+    : '获取当前位置';
+  return <Screen><KeyboardAlignedScrollView contentContainerStyle={[ui.content, styles.content]}>
+    <View style={styles.header}>
+      <Pressable accessibilityRole="button" accessibilityState={{ expanded: detailsOpen }} onPress={() => fix ? setDetailsOpen(open => !open) : void locate()} disabled={busy || locating} style={styles.location}>
+        <Ionicons name="location-outline" size={16} color={colors.accent} />
+        <Text style={styles.locationName} numberOfLines={1}>{placeLabel}</Text>
+        <Ionicons name={detailsOpen ? 'chevron-up' : 'chevron-down'} size={14} color={colors.muted} />
       </Pressable>
-      {detailsOpen && <>
-        <View><Text style={ui.label}>现场怎么找</Text><AlignedTextInput value={location} onChangeText={setLocation} maxLength={80} placeholder="例如：进西门右转，梧桐树下" placeholderTextColor={colors.muted} style={ui.input} accessibilityLabel="现场线索（选填）" /></View>
-      </>}
-      <Action title={busy ? '正在获取现场位置…' : '定位并留在这里'} disabled={busy || locating || !text.trim()} onPress={publish} />
-      {notice ? <Text accessibilityLiveRegion="polite" style={ui.muted}>{notice}</Text> : null}
-      <Text style={ui.muted}>地点坐标和留话保存在这台设备上。</Text>
-    </KeyboardAlignedScrollView></Screen>;
+      <Pressable accessibilityRole="button" accessibilityLabel="补充地点线索" onPress={() => setDetailsOpen(open => !open)} disabled={busy} style={styles.locationEdit}>
+        <Ionicons name="options-outline" size={20} color={colors.text} />
+      </Pressable>
+    </View>
+    {detailsOpen && <View style={styles.details}>
+      <View style={styles.header}>
+        <Text style={ui.muted}>{fix?.accuracy != null ? `定位误差约 ${Math.round(fix.accuracy)} 米` : '等待定位'}</Text>
+        <Pressable accessibilityRole="button" disabled={busy || locating} onPress={locate}><Text style={styles.locationName}>刷新定位</Text></Pressable>
+      </View>
+      <AlignedTextInput value={name} onChangeText={setName} maxLength={40} placeholder="地点名（选填）" placeholderTextColor={colors.muted} style={ui.input} accessibilityLabel="地点名" />
+      <AlignedTextInput value={location} onChangeText={setLocation} maxLength={80} placeholder="怎么找到这里（选填）" placeholderTextColor={colors.muted} style={ui.input} accessibilityLabel="现场线索" />
+    </View>}
+    {mode === 'text' ? <View style={styles.textStage}>
+      <AlignedTextInput value={text} onChangeText={setText} multiline maxLength={300} placeholder="给后来的人留句话……" placeholderTextColor={colors.muted} style={styles.editor} textAlignVertical="top" accessibilityLabel="留话内容" />
+      <Text style={[ui.muted, styles.counter]}>{text.length} / 300</Text>
+    </View> : <LeaveMedia key={mode} kind={mode} draft={draft} focused={isHere} onError={setNotice}
+      onCapture={value => setDrafts(current => ({ ...current, [value.kind]: value }))}
+      onReset={() => setDrafts(current => ({ ...current, [mode]: undefined }))} />}
+    <View style={styles.modes}>
+      {modes.map(option => <Pressable key={option.id} accessibilityRole="button" accessibilityState={{ selected: mode === option.id }}
+        disabled={busy} onPress={() => { setMode(option.id); setNotice(''); }} style={[styles.mode, mode === option.id && styles.selectedMode]}>
+        <Text style={[styles.modeText, mode === option.id && styles.selectedText]}>{option.label}</Text>
+      </Pressable>)}
+    </View>
+    {notice ? <Text accessibilityLiveRegion="polite" style={ui.muted}>{notice}</Text> : null}
+    <Action title={busy ? '正在确认现场位置…' : '留在这里'} disabled={busy || locating || (mode === 'text' ? !text.trim() : !draft)} onPress={publish} />
+  </KeyboardAlignedScrollView></Screen>;
 }
 
 const styles = StyleSheet.create({
-  position: { backgroundColor: colors.surface, borderRadius: 16, padding: 12, gap: 10 },
-  positionRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  positionText: { flex: 1 },
-  positionTitle: { color: colors.text, fontSize: 14, fontWeight: '600' },
-  locate: { minHeight: 44, justifyContent: 'center', paddingHorizontal: 4 },
-  locateText: { color: colors.accent, fontSize: 13 },
+  content: { flexGrow: 1, gap: 12 },
+  header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 },
+  location: { flexDirection: 'row', alignItems: 'center', gap: 6, paddingHorizontal: 13, minHeight: 44, borderRadius: 22, backgroundColor: colors.surface, flexShrink: 1 },
+  locationName: { color: colors.accent, fontSize: 13, flexShrink: 1 },
+  locationEdit: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
+  details: { gap: 8, paddingBottom: 4 },
+  textStage: { minHeight: 280, flex: 1, borderRadius: 26, backgroundColor: '#19241f', padding: 18 },
+  editor: { flex: 1, minHeight: 180, color: colors.text, fontSize: 21, lineHeight: 30 },
+  counter: { textAlign: 'right' },
+  modes: { flexDirection: 'row', alignSelf: 'center', alignItems: 'center', gap: 8, padding: 4, borderRadius: 26, backgroundColor: colors.surface },
+  mode: { paddingHorizontal: 15, minHeight: 44, justifyContent: 'center', borderRadius: 22 },
+  selectedMode: { backgroundColor: colors.accent },
+  modeText: { color: colors.muted, fontSize: 13 },
+  selectedText: { color: '#151a16', fontWeight: '600' },
 });
