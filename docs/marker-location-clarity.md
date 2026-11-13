@@ -1,5 +1,7 @@
 # 逗号与当前位置的显示
 
+> 初代微信小程序历史文档。当前 App 开发请看 [仓库首页](../README.md)。
+
 更新：2026-10-26，客户端源码已修改。关联 [Issue #2](https://github.com/Vans66660/liuda/issues/2)、[PR #3](https://github.com/Vans66660/liuda/pull/3)。
 
 ## 当前设计：固定针脚，蓝点置顶
