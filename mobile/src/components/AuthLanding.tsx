@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { useFonts } from 'expo-font';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { AnimatedLogo } from './AnimatedLogo';
 import { router, usePathname } from 'expo-router';
 import { useEntry } from '../state/entry';
+import { verifyInviteCode } from '../api/invite';
 
 type LoginMethod = '手机号' | 'Apple';
 
@@ -24,14 +25,40 @@ export function AuthLanding() {
   const compact = height - insets.top - insets.bottom < 650;
   const [method, setMethod] = useState<LoginMethod>('手机号');
   const [loginOpen, setLoginOpen] = useState(false);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [inviteCode, setInviteCode] = useState('');
+  const [inviteBusy, setInviteBusy] = useState(false);
+  const [inviteError, setInviteError] = useState('');
+
   function browse() {
     setLoginOpen(false);
+    setInviteOpen(false);
     router.replace(started ? '/discover' : '/onboarding');
   }
+
+  async function submitInvite() {
+    if (inviteBusy) return;
+    setInviteBusy(true);
+    setInviteError('');
+    const result = await verifyInviteCode(inviteCode);
+    setInviteBusy(false);
+    if (!result.ok) {
+      setInviteError(result.message);
+      return;
+    }
+    browse();
+  }
+
+  function openInvite() {
+    setInviteCode('');
+    setInviteError('');
+    setInviteOpen(true);
+  }
+
   return <SafeAreaView style={s.screen}>
     <ScrollView bounces={false} showsVerticalScrollIndicator={false} contentContainerStyle={s.content}>
       <View style={[s.identity, compact && s.identityCompact]}>
-        <AnimatedLogo size={compact ? 172 : 220} active={!loginOpen && (pathname === '/welcome' || pathname === '/login')} />
+        <AnimatedLogo size={compact ? 172 : 220} active={!loginOpen && !inviteOpen && (pathname === '/welcome' || pathname === '/login')} />
         <Text accessibilityRole="header" style={[s.name, fontsLoaded && s.displayFont]}>留答</Text>
         <Text style={[s.tagline, regular]}>到哪都有人陪着你</Text>
       </View>
@@ -42,11 +69,15 @@ export function AuthLanding() {
         <Pressable accessibilityRole="button" accessibilityLabel="通过 Apple 登录" onPress={() => { setMethod('Apple'); setLoginOpen(true); }} style={({ pressed }) => [s.method, s.secondary, pressed && s.pressed]}>
           <Ionicons name="logo-apple" size={22} color="#eee" style={s.methodIcon} /><Text style={[s.secondaryText, medium]}>通过 Apple 登录</Text>
         </Pressable>
+        <Pressable accessibilityRole="button" accessibilityLabel="使用团队邀请码" onPress={openInvite} style={({ pressed }) => [s.method, s.inviteButton, pressed && s.pressed]}>
+          <Ionicons name="key-outline" size={20} color="#d5e6bb" style={s.methodIcon} /><Text style={[s.inviteButtonText, medium]}>使用团队邀请码</Text>
+        </Pressable>
         <Pressable accessibilityRole="button" onPress={browse} style={({ pressed }) => [s.guest, pressed && s.pressed]}><Text style={[s.guestText, regular]}>先逛逛</Text></Pressable>
       </View>
       <Pressable accessibilityRole="link" onPress={() => router.push('/about-privacy')} style={s.privacy}><Text style={[s.privacyText, regular]}>隐私说明</Text></Pressable>
       {!!notice && <Text style={[s.notice, regular]}>{notice}</Text>}
     </ScrollView>
+
     <Modal visible={loginOpen} transparent animationType="fade" onRequestClose={() => setLoginOpen(false)}>
       <View style={s.modalBackground}>
         <Pressable accessibilityRole="button" accessibilityLabel="关闭登录说明" style={StyleSheet.absoluteFill} onPress={() => setLoginOpen(false)} />
@@ -54,6 +85,36 @@ export function AuthLanding() {
           <View style={s.sheetHeader}><Text accessibilityRole="header" style={[s.sheetTitle, medium]}>{method}登录</Text><Pressable accessibilityRole="button" accessibilityLabel="关闭登录说明" hitSlop={12} onPress={() => setLoginOpen(false)}><Ionicons name="close" size={23} color="#a1a1a1" /></Pressable></View>
           <Text style={[s.sheetBody, regular]}>账号服务尚未接入。现在可以先浏览演示内容。</Text>
           <Pressable accessibilityRole="button" onPress={browse} style={({ pressed }) => [s.method, s.primary, pressed && s.pressed]}><Text style={[s.primaryText, medium]}>先逛逛</Text></Pressable>
+        </View>
+      </View>
+    </Modal>
+
+    <Modal visible={inviteOpen} transparent animationType="fade" onRequestClose={() => setInviteOpen(false)}>
+      <View style={s.modalBackground}>
+        <Pressable accessibilityRole="button" accessibilityLabel="关闭邀请码窗口" style={StyleSheet.absoluteFill} onPress={() => setInviteOpen(false)} />
+        <View accessibilityViewIsModal style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 24) }]}>
+          <View style={s.sheetHeader}>
+            <Text accessibilityRole="header" style={[s.sheetTitle, medium]}>团队邀请码</Text>
+            <Pressable accessibilityRole="button" accessibilityLabel="关闭邀请码窗口" hitSlop={12} onPress={() => setInviteOpen(false)}><Ionicons name="close" size={23} color="#a1a1a1" /></Pressable>
+          </View>
+          <Text style={[s.sheetBody, regular]}>内部测试版：输入团队邀请码后进入。邀请码由云端校验，本版不含短信验证。</Text>
+          <TextInput
+            accessibilityLabel="邀请码输入框"
+            value={inviteCode}
+            onChangeText={value => { setInviteCode(value); setInviteError(''); }}
+            placeholder="请输入邀请码"
+            placeholderTextColor="#6f7370"
+            autoCapitalize="characters"
+            autoCorrect={false}
+            spellCheck={false}
+            allowFontScaling={false}
+            editable={!inviteBusy}
+            style={s.inviteInput}
+          />
+          {!!inviteError && <Text style={s.inviteError}>{inviteError}</Text>}
+          <Pressable accessibilityRole="button" disabled={inviteBusy} onPress={submitInvite} style={({ pressed }) => [s.method, s.primary, (pressed || inviteBusy) && s.pressed]}>
+            <Text style={[s.primaryText, medium]}>{inviteBusy ? '校验中…' : '进入留答'}</Text>
+          </Pressable>
         </View>
       </View>
     </Modal>
@@ -76,6 +137,10 @@ const s = StyleSheet.create({
   primaryText: { color: '#111', fontSize: 15, lineHeight: 22, fontWeight: 'normal', letterSpacing: 0.4, includeFontPadding: false },
   secondary: { backgroundColor: '#131313', borderWidth: 1, borderColor: '#242424' },
   secondaryText: { color: '#e8e8e8', fontSize: 15, lineHeight: 22, fontWeight: 'normal', letterSpacing: 0.4, includeFontPadding: false },
+  inviteButton: { backgroundColor: '#1d2721', borderWidth: 1, borderColor: '#3b4a3c' },
+  inviteButtonText: { color: '#d5e6bb', fontSize: 15, lineHeight: 22, fontWeight: 'normal', letterSpacing: 0.4, includeFontPadding: false },
+  inviteInput: { color: '#f4f4f4', backgroundColor: '#252930', borderRadius: 14, paddingLeft: 16, paddingRight: 26, paddingVertical: 14, fontSize: 16, minHeight: 52, includeFontPadding: true },
+  inviteError: { color: '#e4a5a5', fontSize: 13, lineHeight: 20, includeFontPadding: false },
   guest: { minHeight: 48, justifyContent: 'center', alignItems: 'center' },
   guestText: { color: '#a0a0a0', fontSize: 13, lineHeight: 22, letterSpacing: 0.8, includeFontPadding: false },
   privacy: { minHeight: 38, alignItems: 'center', justifyContent: 'center' },
