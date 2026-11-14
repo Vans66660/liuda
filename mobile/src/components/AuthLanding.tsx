@@ -1,9 +1,10 @@
 import { useState } from 'react';
 import { useFonts } from 'expo-font';
-import { Modal, Pressable, ScrollView, StyleSheet, Text, TextInput, View, useWindowDimensions } from 'react-native';
+import { Modal, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { AnimatedLogo } from './AnimatedLogo';
+import { AlignedTextInput, KeyboardAlignedSheet } from './KeyboardAlignedScrollView';
 import { router, usePathname } from 'expo-router';
 import { useEntry } from '../state/entry';
 import { verifyInviteCode } from '../api/invite';
@@ -92,13 +93,13 @@ export function AuthLanding() {
     <Modal visible={inviteOpen} transparent animationType="fade" onRequestClose={() => setInviteOpen(false)}>
       <View style={s.modalBackground}>
         <Pressable accessibilityRole="button" accessibilityLabel="关闭邀请码窗口" style={StyleSheet.absoluteFill} onPress={() => setInviteOpen(false)} />
-        <View accessibilityViewIsModal style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 24) }]}>
+        <KeyboardAlignedSheet accessibilityViewIsModal style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 24) }]}>
           <View style={s.sheetHeader}>
             <Text accessibilityRole="header" style={[s.sheetTitle, medium]}>团队邀请码</Text>
             <Pressable accessibilityRole="button" accessibilityLabel="关闭邀请码窗口" hitSlop={12} onPress={() => setInviteOpen(false)}><Ionicons name="close" size={23} color="#a1a1a1" /></Pressable>
           </View>
           <Text style={[s.sheetBody, regular]}>内部测试版：输入团队邀请码后进入。邀请码由云端校验，本版不含短信验证。</Text>
-          <TextInput
+          <AlignedTextInput
             accessibilityLabel="邀请码输入框"
             value={inviteCode}
             onChangeText={value => { setInviteCode(value); setInviteError(''); }}
@@ -115,7 +116,7 @@ export function AuthLanding() {
           <Pressable accessibilityRole="button" disabled={inviteBusy} onPress={submitInvite} style={({ pressed }) => [s.method, s.primary, (pressed || inviteBusy) && s.pressed]}>
             <Text style={[s.primaryText, medium]}>{inviteBusy ? '校验中…' : '进入留答'}</Text>
           </Pressable>
-        </View>
+        </KeyboardAlignedSheet>
       </View>
     </Modal>
   </SafeAreaView>;
