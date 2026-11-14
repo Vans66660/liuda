@@ -3,7 +3,7 @@ import { AccessibilityInfo, Animated, AppState, Easing, Image, Pressable, StyleS
 import Svg, { Circle, Defs, RadialGradient, Stop } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 
-const logo = require('../../assets/liuda-comma.png');
+const logo = require('../../assets/liuda-comma-transparent.png');
 const sourceSize = 1254;
 // Pixel bounds of the two eyes in the original artwork. The artwork remains unchanged.
 const eyes = [
@@ -11,7 +11,7 @@ const eyes = [
   { x: 758, y: 500, width: 73, height: 111, colors: ['#f5f4f4', '#efeeee', '#ebebeb'] as const },
 ];
 
-export function AnimatedLogo({ size, active }: { size: number; active: boolean }) {
+export function AnimatedLogo({ size, active, blinkOnStart = false }: { size: number; active: boolean; blinkOnStart?: boolean }) {
   const glowId = useId().replace(/:/g, '');
   const [float] = useState(() => new Animated.Value(0));
   const [blink] = useState(() => new Animated.Value(0));
@@ -58,6 +58,7 @@ export function AnimatedLogo({ size, active }: { size: number; active: boolean }
       Animated.timing(float, { toValue: 0, duration: 2700, easing: Easing.inOut(Easing.sin), useNativeDriver: true, isInteraction: false }),
     ]));
     floating.start();
+    if (blinkOnStart) blinkOnce();
     let timer: ReturnType<typeof setTimeout>;
     let stopped = false;
     const schedule = () => {
@@ -76,7 +77,7 @@ export function AnimatedLogo({ size, active }: { size: number; active: boolean }
       float.setValue(0);
       blink.setValue(0);
     };
-  }, [enabled, blinkOnce, float, blink]);
+  }, [enabled, blinkOnce, blinkOnStart, float, blink]);
 
   const scale = size / sourceSize;
   const opacity = blink.interpolate({ inputRange: [0, 0.035, 0.08, 1], outputRange: [0, 0, 1, 1], extrapolate: 'clamp' });
@@ -85,7 +86,6 @@ export function AnimatedLogo({ size, active }: { size: number; active: boolean }
       { translateY: float.interpolate({ inputRange: [0, 1], outputRange: [0, -6] }) },
       { rotate: float.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '0.8deg'] }) },
     ] }}>
-      <Image accessible={false} source={logo} style={{ width: size, height: size }} />
       <Animated.View style={{ position: 'absolute', left: -size * 0.3, top: -size * 0.3, width: size * 1.6, height: size * 1.6,
         opacity: float.interpolate({ inputRange: [0, 1], outputRange: [0.65, 1] }),
         transform: [{ scale: float.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1.04] }) }],
@@ -93,10 +93,10 @@ export function AnimatedLogo({ size, active }: { size: number; active: boolean }
         <Svg width="100%" height="100%" viewBox="0 0 160 160">
           <Defs>
             <RadialGradient id={glowId} cx="82" cy="78" r="72" gradientUnits="userSpaceOnUse">
-              <Stop offset="0" stopColor="#fff" stopOpacity="0" />
-              <Stop offset="0.2" stopColor="#fff" stopOpacity="0" />
-              <Stop offset="0.36" stopColor="#fff" stopOpacity="0.17" />
-              <Stop offset="0.52" stopColor="#fff" stopOpacity="0.095" />
+              <Stop offset="0" stopColor="#fff" stopOpacity="0.13" />
+              <Stop offset="0.2" stopColor="#fff" stopOpacity="0.14" />
+              <Stop offset="0.36" stopColor="#fff" stopOpacity="0.11" />
+              <Stop offset="0.52" stopColor="#fff" stopOpacity="0.065" />
               <Stop offset="0.74" stopColor="#fff" stopOpacity="0.028" />
               <Stop offset="1" stopColor="#fff" stopOpacity="0" />
             </RadialGradient>
@@ -104,6 +104,7 @@ export function AnimatedLogo({ size, active }: { size: number; active: boolean }
           <Circle cx="82" cy="78" r="72" fill={`url(#${glowId})`} />
         </Svg>
       </Animated.View>
+      <Image accessible={false} source={logo} style={{ width: size, height: size }} />
       {eyes.map(eye => {
         const pad = 10;
         const left = (eye.x - pad) * scale;

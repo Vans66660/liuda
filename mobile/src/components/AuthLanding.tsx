@@ -7,10 +7,10 @@ import { AnimatedLogo } from './AnimatedLogo';
 import { router, usePathname } from 'expo-router';
 import { useEntry } from '../state/entry';
 
-type LoginMethod = '微信' | 'Apple';
+type LoginMethod = '手机号' | 'Apple';
 
 export function AuthLanding() {
-  const { begin, notice } = useEntry();
+  const { started, notice } = useEntry();
   const [fontsLoaded] = useFonts({
     LiudaDisplay: require('../../assets/fonts/LiudaDisplay.otf'),
     LiudaInterfaceV2: require('../../assets/fonts/LiudaInterfaceV2.otf'),
@@ -22,12 +22,11 @@ export function AuthLanding() {
   const { height } = useWindowDimensions();
   const insets = useSafeAreaInsets();
   const compact = height - insets.top - insets.bottom < 650;
-  const [method, setMethod] = useState<LoginMethod>('微信');
+  const [method, setMethod] = useState<LoginMethod>('手机号');
   const [loginOpen, setLoginOpen] = useState(false);
   function browse() {
     setLoginOpen(false);
-    begin();
-    router.replace('/discover');
+    router.replace(started ? '/discover' : '/onboarding');
   }
   return <SafeAreaView style={s.screen}>
     <ScrollView bounces={false} showsVerticalScrollIndicator={false} contentContainerStyle={s.content}>
@@ -37,8 +36,8 @@ export function AuthLanding() {
         <Text style={[s.tagline, regular]}>到哪都有人陪着你</Text>
       </View>
       <View style={s.actions}>
-        <Pressable accessibilityRole="button" accessibilityLabel="微信登录" onPress={() => { setMethod('微信'); setLoginOpen(true); }} style={({ pressed }) => [s.method, s.primary, pressed && s.pressed]}>
-          <Ionicons name="logo-wechat" size={22} color="#111" style={s.methodIcon} /><Text style={[s.primaryText, medium]}>微信登录</Text>
+        <Pressable accessibilityRole="button" accessibilityLabel="手机号登录" onPress={() => { setMethod('手机号'); setLoginOpen(true); }} style={({ pressed }) => [s.method, s.primary, pressed && s.pressed]}>
+          <Ionicons name="logo-wechat" size={22} color="#111" style={s.methodIcon} /><Text style={[s.primaryText, medium]}>手机号登录</Text>
         </Pressable>
         <Pressable accessibilityRole="button" accessibilityLabel="通过 Apple 登录" onPress={() => { setMethod('Apple'); setLoginOpen(true); }} style={({ pressed }) => [s.method, s.secondary, pressed && s.pressed]}>
           <Ionicons name="logo-apple" size={22} color="#eee" style={s.methodIcon} /><Text style={[s.secondaryText, medium]}>通过 Apple 登录</Text>
