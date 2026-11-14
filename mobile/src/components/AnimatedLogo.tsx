@@ -3,7 +3,7 @@ import { AccessibilityInfo, Animated, AppState, Easing, Image, Pressable, StyleS
 import Svg, { Circle, Defs, RadialGradient, Stop } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 
-const logo = require('../../assets/liuda-comma.png');
+const logo = require('../../assets/liuda-comma-transparent.png');
 const sourceSize = 1254;
 // Pixel bounds of the two eyes in the original artwork. The artwork remains unchanged.
 const eyes = [
@@ -86,7 +86,6 @@ export function AnimatedLogo({ size, active, blinkOnStart = false }: { size: num
       { translateY: float.interpolate({ inputRange: [0, 1], outputRange: [0, -6] }) },
       { rotate: float.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '0.8deg'] }) },
     ] }}>
-      <Image accessible={false} source={logo} style={{ width: size, height: size }} />
       <Animated.View style={{ position: 'absolute', left: -size * 0.3, top: -size * 0.3, width: size * 1.6, height: size * 1.6,
         opacity: float.interpolate({ inputRange: [0, 1], outputRange: [0.65, 1] }),
         transform: [{ scale: float.interpolate({ inputRange: [0, 1], outputRange: [0.96, 1.04] }) }],
@@ -94,10 +93,10 @@ export function AnimatedLogo({ size, active, blinkOnStart = false }: { size: num
         <Svg width="100%" height="100%" viewBox="0 0 160 160">
           <Defs>
             <RadialGradient id={glowId} cx="82" cy="78" r="72" gradientUnits="userSpaceOnUse">
-              <Stop offset="0" stopColor="#fff" stopOpacity="0" />
-              <Stop offset="0.2" stopColor="#fff" stopOpacity="0" />
-              <Stop offset="0.36" stopColor="#fff" stopOpacity="0.17" />
-              <Stop offset="0.52" stopColor="#fff" stopOpacity="0.095" />
+              <Stop offset="0" stopColor="#fff" stopOpacity="0.13" />
+              <Stop offset="0.2" stopColor="#fff" stopOpacity="0.14" />
+              <Stop offset="0.36" stopColor="#fff" stopOpacity="0.11" />
+              <Stop offset="0.52" stopColor="#fff" stopOpacity="0.065" />
               <Stop offset="0.74" stopColor="#fff" stopOpacity="0.028" />
               <Stop offset="1" stopColor="#fff" stopOpacity="0" />
             </RadialGradient>
@@ -105,6 +104,7 @@ export function AnimatedLogo({ size, active, blinkOnStart = false }: { size: num
           <Circle cx="82" cy="78" r="72" fill={`url(#${glowId})`} />
         </Svg>
       </Animated.View>
+      <Image accessible={false} source={logo} style={{ width: size, height: size }} />
       {eyes.map(eye => {
         const pad = 10;
         const left = (eye.x - pad) * scale;

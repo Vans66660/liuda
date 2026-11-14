@@ -95,7 +95,7 @@ function PhotoCapture({ onCapture, onError }: CaptureProps) {
   </>;
 }
 
-function VoiceCapture({ onCapture, onError }: CaptureProps) {
+export function VoiceCapture({ onCapture, onError, forPlace = false, onHoldChange }: CaptureProps & { forPlace?: boolean; onHoldChange?: (held: boolean) => void }) {
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
   const recording = useAudioRecorderState(recorder, 250);
   const [busy, setBusy] = useState(false);
@@ -110,10 +110,11 @@ function VoiceCapture({ onCapture, onError }: CaptureProps) {
     return () => {
       active.current = false;
       hold.current = null;
+      onHoldChange?.(false);
       clearTimeout(timer.current);
       void setAudioModeAsync({ allowsRecording: false }).catch(() => {});
     };
-  }, []);
+  }, [onHoldChange]);
 
   async function finish(cancelled: boolean) {
     if (!running.current) return;
@@ -122,8 +123,11 @@ function VoiceCapture({ onCapture, onError }: CaptureProps) {
     setBusy(true);
     try {
       await recorder.stop();
-      const uri = recorder.uri;
-      if (!uri) return;
+      const uri = recorder.uri ?? recorder.getStatus().url;
+      if (!uri) {
+        if (active.current && !cancelled) onError('没有收到录音，请再按住说一次。');
+        return;
+      }
       if (cancelled || !active.current) {
         try { new File(uri).delete(); } catch {}
       } else {
@@ -144,6 +148,7 @@ function VoiceCapture({ onCapture, onError }: CaptureProps) {
       if (hold.current !== gesture) return;
       if (!permission.granted) {
         hold.current = null;
+        onHoldChange?.(false);
         const result = await AudioModule.requestRecordingPermissionsAsync();
         if (active.current) onError(result.granted ? '按住按钮开始说话。' : '请在系统设置中允许留答使用麦克风。');
         return;
@@ -177,37 +182,45 @@ function VoiceCapture({ onCapture, onError }: CaptureProps) {
 
   function release(cancelled: boolean) {
     hold.current = null;
+    onHoldChange?.(false);
     setCancelling(false);
+    if (!running.current && !cancelled) {
+      onError('录音还没开始，请按住等麦克风变红后再说。');
+      return;
+    }
     void finish(cancelled);
   }
 
   return <>
-    <Text style={[styles.prompt, cancelling && styles.cancelText]}>
+    {!forPlace && <Text style={[styles.prompt, cancelling && styles.cancelText]}>
       {cancelling ? '松手取消' : recording.isRecording ? `00:${String(Math.floor(recording.durationMillis / 1000)).padStart(2, '0')}` : '留一段声音'}
-    </Text>
-    <View style={styles.controls}>
+    </Text>}
+    <View style={forPlace ? styles.placeControls : styles.controls}>
       <View
         accessible accessibilityRole="button" accessibilityLabel="按住说话，上滑取消"
         onStartShouldSetResponder={() => !busy && !running.current && !hold.current}
         onResponderGrant={event => {
           const gesture = { startY: event.nativeEvent.pageY, cancelled: false };
           hold.current = gesture;
+          onHoldChange?.(true);
           void start(gesture);
         }}
         onResponderMove={event => move(event.nativeEvent.pageY)}
-        onResponderRelease={event => {
-          move(event.nativeEvent.pageY);
-          release(hold.current?.cancelled ?? true);
+        onResponderRelease={() => {
+          if (hold.current) release(hold.current.cancelled);
         }}
         onResponderTerminationRequest={() => false}
-        onResponderTerminate={() => release(true)}
+        onResponderTerminate={() => {
+          if (hold.current && !hold.current.cancelled) onError('录音被中断，请再按住说一次。');
+          release(true);
+        }}
         style={styles.shutter}
       >
         <View style={[styles.shutterCore, recording.isRecording && styles.recording, cancelling && styles.cancelled]}>
           <Ionicons name={cancelling ? 'close' : 'mic'} size={26} color="#151a16" />
         </View>
       </View>
-      <Text style={styles.small}>{cancelling ? '下滑可恢复' : recording.isRecording ? '松手保存 · 上滑取消' : '按住说话'}</Text>
+      <Text style={styles.small}>{cancelling ? '松手取消' : recording.isRecording ? (forPlace ? '松手发送 · 上滑取消' : '松手保存 · 上滑取消') : busy ? '正在处理录音…' : '按住说话'}</Text>
     </View>
   </>;
 }
@@ -236,6 +249,7 @@ const styles = StyleSheet.create({
   topRight: { top: 0, right: 0, borderTopWidth: 1.5, borderRightWidth: 1.5 },
   bottomLeft: { bottom: 0, left: 0, borderBottomWidth: 1.5, borderLeftWidth: 1.5 },
   bottomRight: { bottom: 0, right: 0, borderBottomWidth: 1.5, borderRightWidth: 1.5 },
+  placeControls: { alignItems: 'center', gap: 6 },
   controls: { position: 'absolute', alignItems: 'center', bottom: 16, gap: 4 },
   shutter: { width: 74, height: 74, borderRadius: 37, borderWidth: 2, borderColor: colors.accent, justifyContent: 'center', alignItems: 'center' },
   shutterCore: { width: 60, height: 60, borderRadius: 30, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },

@@ -11,7 +11,7 @@ const campusRoads = campusRoadCoordinates.map(road =>
 );
 const campusCenter = { latitude: 39.978964, longitude: 116.421472 };
 
-const height = 180;
+const height = 144;
 const roadCache = new Map<string, Point[][]>();
 
 export function LiudaPositionMap({ point, fix }: { point: Point; fix: Fix | null }) {

@@ -10,6 +10,7 @@ export type Place = {
   location: string;
   distance: number;
   point?: Point;
+  customLocationId?: string;
   media?: PlaceMedia;
   teaser: string;
   text: string;
@@ -55,7 +56,7 @@ type Store = State & {
   save: (id: string) => void;
   like: (id: string, fix?: Fix | null) => void;
   reply: (id: string, text: string, fix?: Fix | null) => void;
-  create: (name: string, location: string, text: string, point?: Point, media?: PlaceMedia) => string;
+  create: (name: string, location: string, text: string, point?: Point, media?: PlaceMedia, customLocation?: true | string) => string;
 };
 const Context = createContext<Store | null>(null);
 const key = 'liuda-mobile-demo-v1';
@@ -66,6 +67,7 @@ function validPlace(value: unknown): value is Place {
   return ['id', 'name', 'location', 'teaser', 'text'].every(field => typeof (place as unknown as Record<string, unknown>)[field] === 'string')
     && ['sage', 'sand', 'blue'].includes(place.mood)
     && (place.point === undefined || isPoint(place.point))
+    && (place.customLocationId === undefined || typeof place.customLocationId === 'string')
     && (place.media === undefined || (!!place.media && ['photo', 'voice'].includes(place.media.kind)
       && typeof place.media.file === 'string' && /^leave-[a-z0-9-]+[.](jpg|m4a)$/.test(place.media.file)))
     && Number.isFinite(place.distance) && Number.isFinite(place.likes)
@@ -125,9 +127,9 @@ export function PlacesProvider({ children }: { children: React.ReactNode }) {
       return { ...place, participated: true, replies: [...place.replies, { id: Date.now() + '-' + Math.random(), text: text.trim(), mine: true }] };
     }) }));
   }
-  function create(name: string, location: string, text: string, point?: Point, media?: PlaceMedia) {
+  function create(name: string, location: string, text: string, point?: Point, media?: PlaceMedia, customLocation?: true | string) {
     const id = 'local-' + Date.now() + '-' + Math.random().toString(36).slice(2);
-    const place: Place = { id, name: name.trim() || '现场留话', location: location.trim(), text: text.trim(), teaser: text.trim() || (media?.kind === 'photo' ? '一张现场照片' : media?.kind === 'voice' ? '一段现场语音' : ''), distance: 0, point, media, mood: 'sage', likes: 0, liked: false, participated: true, owned: true, replies: [] };
+    const place: Place = { id, name: name.trim() || '现场留话', location: location.trim(), text: text.trim(), teaser: text.trim() || (media?.kind === 'photo' ? '一张现场照片' : media?.kind === 'voice' ? '一段现场语音' : ''), distance: 0, point, media, customLocationId: customLocation === true ? id : customLocation, mood: 'sage', likes: 0, liked: false, participated: true, owned: true, replies: [] };
     setState(current => ({ ...current, places: [place, ...current.places], arrived: point ? current.arrived : [...current.arrived, id] }));
     return id;
   }
