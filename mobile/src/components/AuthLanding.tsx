@@ -7,12 +7,14 @@ import { AnimatedLogo } from './AnimatedLogo';
 import { AlignedTextInput, KeyboardAlignedSheet } from './KeyboardAlignedScrollView';
 import { router, usePathname } from 'expo-router';
 import { useEntry } from '../state/entry';
+import { useIdentity } from '../state/identity';
 import { verifyInviteCode } from '../api/invite';
 
 type LoginMethod = '手机号' | 'Apple';
 
 export function AuthLanding() {
   const { started, notice } = useEntry();
+  const { signInWithInvite } = useIdentity();
   const [fontsLoaded] = useFonts({
     LiudaDisplay: require('../../assets/fonts/LiudaDisplay.otf'),
     LiudaInterfaceV2: require('../../assets/fonts/LiudaInterfaceV2.otf'),
@@ -47,6 +49,7 @@ export function AuthLanding() {
       setInviteError(result.message);
       return;
     }
+    await signInWithInvite(inviteCode);
     browse();
   }
 

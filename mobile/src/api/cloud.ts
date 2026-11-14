@@ -14,6 +14,7 @@ type WhereQuery = { limit(n: number): LimitQuery };
 type DocRef = {
   get(): Promise<{ data: Doc | Doc[] }>;
   set(payload: Record<string, unknown>): Promise<unknown>;
+  remove(): Promise<unknown>;
 };
 export type Collection = {
   where(cond: Record<string, unknown>): WhereQuery;

@@ -261,6 +261,16 @@ export default function LeaveScreen() {
       setBusy(false);
     }
   }
+  function discard() {
+    Object.values(drafts).forEach(value => {
+      if (value?.uri) { try { new File(value.uri).delete(); } catch { /* 临时文件可能已被清理 */ } }
+    });
+    setName(''); setLocation(''); setDescriptionDraft(''); setAskedForClue(false);
+    setAskLandmark(false); setMatchedShop(''); setShopPoint(undefined); setShopOptions([]);
+    setPlaceStep('describe'); setLocationChoice('new'); setText(''); setConfirmed(undefined);
+    setDrafts({}); setNotice('');
+    router.navigate('/discover');
+  }
   if (!store.ready) return <Loading />;
   const currentPlaceLabel = fix
     ? (fix.accuracy !== null && fix.accuracy <= 15 ? description?.building : undefined) || description?.area || (description?.landmark ? `${description.landmark}附近` : description?.address) || '当前位置'
@@ -328,6 +338,9 @@ export default function LeaveScreen() {
         <Text style={ui.body}>{place.name}</Text>
       </Pressable>)}
       {notice ? <Text accessibilityLiveRegion="polite" style={ui.muted}>{notice}</Text> : null}
+      <Pressable accessibilityRole="button" disabled={organizing || confirming || locating} accessibilityLabel="放弃这条留话" onPress={discard} style={styles.secondaryReply}>
+        <Text style={styles.secondaryReplyText}>放弃这条留话</Text>
+      </Pressable>
     </KeyboardAlignedScrollView>
   </Screen>;
 
@@ -366,6 +379,9 @@ export default function LeaveScreen() {
     </View>
     {notice ? <Text accessibilityLiveRegion="polite" style={ui.muted}>{notice}</Text> : null}
     <Action title={busy ? '正在确认现场位置…' : '留在这里'} disabled={busy || locating || missingName || (mode === 'text' ? !text.trim() : !draft)} onPress={publish} />
+    <Pressable accessibilityRole="button" disabled={busy} accessibilityLabel="放弃这条留话" onPress={discard} style={styles.secondaryReply}>
+      <Text style={styles.secondaryReplyText}>放弃这条留话</Text>
+    </Pressable>
   </KeyboardAlignedScrollView></Screen>;
 }
 

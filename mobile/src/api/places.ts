@@ -2,11 +2,14 @@ import { collection, ensureSignedIn, type Doc } from './cloud';
 import { PLACES_COLLECTION } from './config';
 import type { Place } from '../state/places';
 
-type StoredPlace = Omit<Place, 'id'> & { _id: string };
+/** 云端文档不写 owned：作者归属只由 authorId 决定，避免把「这是我的」广播给所有设备。 */
+type StoredPlace = Omit<Place, 'id' | 'owned'> & { _id: string };
 
 function toDoc(place: Place): StoredPlace {
-  const { id, ...rest } = place;
-  return { ...rest, _id: id };
+  const doc: Record<string, unknown> = { ...place, _id: place.id };
+  delete doc.id;
+  delete doc.owned;
+  return doc as unknown as StoredPlace;
 }
 
 /** 云端脏数据不能污染 UI：这里做一次最小结构校验。 */
@@ -35,6 +38,7 @@ function fromDoc(doc: Doc): Place | null {
     liked: doc.liked === true,
     participated: doc.participated === true,
     owned: doc.owned === true,
+    authorId: typeof doc.authorId === 'string' ? doc.authorId : undefined,
   };
   if (typeof doc.customLocationId === 'string') {
     place.customLocationId = doc.customLocationId;
@@ -63,4 +67,10 @@ export async function fetchCloudPlaces(limit = 100): Promise<Place[]> {
 export async function putCloudPlace(place: Place): Promise<void> {
   await ensureSignedIn();
   await collection(PLACES_COLLECTION).doc(place.id).set({ data: toDoc(place) });
+}
+
+/** 真删除云端文档，不写墓碑；删除失败由调用方明确提示，不静默放行。 */
+export async function removeCloudPlace(id: string): Promise<void> {
+  await ensureSignedIn();
+  await collection(PLACES_COLLECTION).doc(id).remove();
 }

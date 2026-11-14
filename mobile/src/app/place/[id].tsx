@@ -1,6 +1,6 @@
 import { placeMediaUri, VoicePlayback } from '../../components/LeaveMedia';
 import { useCallback, useState } from 'react';
-import { Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
+import { Alert, Image, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { AlignedTextInput, KeyboardAlignedScrollView } from '../../components/KeyboardAlignedScrollView';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -10,7 +10,7 @@ import { LivePlacePosition } from '../../components/LivePlacePosition';
 import { atPoint, type Fix } from '../../location/geo';
 import { PlaceMiniMap } from '../../components/PlaceMiniMap';
 import { Author } from '../../components/Author';
-import { usePlaces } from '../../state/places';
+import { isMyPlace, isMyReply, usePlaces } from '../../state/places';
 import { Action, colors, Loading, moods, ui } from '../../components/ui';
 
 export default function PlaceScreen() {
@@ -31,9 +31,33 @@ export default function PlaceScreen() {
   const onsite = point ? atPoint(fix, point) : store.arrived.includes(place.id);
   const unlocked = onsite || place.participated;
   const palette = moods[place.mood];
+  const mine = isMyPlace(place, store.authorId);
   const locationClue = [place.name === '现场留话' ? '' : place.name, place.location].filter(Boolean).join(' · ');
   const photoUri = unlocked && place.media?.kind === 'photo' ? placeMediaUri(place.media) : undefined;
   const closeOverlay = () => setOverlay(null);
+
+  const currentPlace = place;
+  const confirmDeletePlace = () => {
+    Alert.alert('删除留话', '删除后无法恢复，这条留话和它在其他设备上的共享副本都会被移除。', [
+      { text: '取消', style: 'cancel' },
+      { text: '删除', style: 'destructive', onPress: () => {
+        void store.removePlace(currentPlace.id).then(removed => {
+          if (!removed) return;
+          closeOverlay();
+          if (router.canGoBack()) router.back();
+          else router.replace('/discover');
+        });
+      } },
+    ]);
+  };
+
+  const confirmDeleteReply = (replyId: string) => {
+    Alert.alert('删除接话', '删除后无法恢复，只会移除你自己说的这一句。', [
+      { text: '取消', style: 'cancel' },
+      { text: '删除', style: 'destructive', onPress: () => { store.removeReply(currentPlace.id, replyId); } },
+    ]);
+  };
+
   return <View style={ui.screen}>
     <KeyboardAlignedScrollView contentContainerStyle={[ui.content, styles.content]}>
       <View style={styles.locationSection}>
@@ -52,7 +76,7 @@ export default function PlaceScreen() {
         {unlocked && place.media?.kind === 'voice' && <VoicePlayback uri={placeMediaUri(place.media)} />}
         {(!unlocked || place.text) ? <Text style={styles.originalText}>{unlocked ? place.text : place.teaser}</Text> : null}
         <View style={styles.engagement}>
-          <View style={styles.author}><Author mine={place.owned} original={!place.owned} /></View>
+          <View style={styles.author}><Author mine={mine} original={!mine} /></View>
           <Pressable accessibilityRole="button" accessibilityState={{ disabled: !onsite, selected: place.liked }} disabled={!onsite} onPress={() => store.like(place.id, fix)} accessibilityLabel={onsite ? (place.liked ? '取消点赞' : '点赞') : '点赞需到场'} style={styles.like}>
             <Ionicons name={place.liked ? 'heart' : 'heart-outline'} size={19} color={place.liked ? '#e5b9a9' : palette.soft} />
             <Text style={{ color: palette.soft }}>{place.likes}</Text>
@@ -60,6 +84,9 @@ export default function PlaceScreen() {
           <Pressable accessibilityRole="button" accessibilityLabel={store.saved.includes(place.id) ? '取消想去' : '标记想去'} onPress={() => store.save(place.id)} style={styles.bookmark}>
             <Ionicons name={store.saved.includes(place.id) ? 'bookmark' : 'bookmark-outline'} size={20} color={palette.soft} />
           </Pressable>
+          {mine && <Pressable accessibilityRole="button" accessibilityLabel="删除留话" onPress={confirmDeletePlace} style={styles.bookmark}>
+            <Ionicons name="trash-outline" size={20} color="#d9a0a0" />
+          </Pressable>}
         </View>
       </View>
       {!unlocked && <Text style={ui.muted}>到场后解锁</Text>}
@@ -71,10 +98,18 @@ export default function PlaceScreen() {
         </View>
         {place.replies.length === 0
           ? <Text style={ui.muted}>还没人接话</Text>
-          : place.replies.map(item => <View key={item.id} style={styles.reply}>
-              <Author mine={item.mine} original={item.mine && place.owned} />
+          : place.replies.map(item => {
+            const own = isMyReply(item, store.authorId);
+            return <View key={item.id} style={styles.reply}>
+              <View style={styles.replyTop}>
+                <Author mine={own} original={own && mine} />
+                {own && <Pressable accessibilityRole="button" accessibilityLabel="删除接话" onPress={() => confirmDeleteReply(item.id)} style={styles.replyDelete}>
+                  <Text style={styles.replyDeleteText}>删除</Text>
+                </Pressable>}
+              </View>
               <Text style={ui.body}>{item.text}</Text>
-            </View>)}
+            </View>;
+          })}
       </View>}
     </KeyboardAlignedScrollView>
     {unlocked && <View style={[styles.footer, { paddingBottom: Math.max(10, insets.bottom) }]}>
@@ -119,6 +154,9 @@ const styles = StyleSheet.create({
   footer: { paddingHorizontal: 20, paddingTop: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line },
   replies: { gap: 10, borderTopWidth: StyleSheet.hairlineWidth, borderTopColor: colors.line, paddingTop: 14 },
   reply: { gap: 6, paddingVertical: 8 },
+  replyTop: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 12 },
+  replyDelete: { minWidth: 44, minHeight: 32, alignItems: 'center', justifyContent: 'center' },
+  replyDeleteText: { color: '#d9a0a0', fontSize: 12, includeFontPadding: false },
   viewer: { flex: 1, backgroundColor: '#080909' },
   fullPhoto: { width: '100%', height: '100%' },
   viewerClose: { position: 'absolute', right: 16, width: 44, height: 44, borderRadius: 22, backgroundColor: '#101215dd', alignItems: 'center', justifyContent: 'center' },
