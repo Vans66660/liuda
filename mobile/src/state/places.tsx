@@ -2,6 +2,8 @@ import type { PlaceMedia } from '../components/LeaveMedia';
 import { atPoint, isPoint, type Fix, type Point } from '../location/geo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { fetchCloudPlaces, putCloudPlace } from '../api/places';
+import { cloudErrorMessage } from '../api/cloud';
 
 export type Reply = { id: string; text: string; mine: boolean };
 export type Place = {
@@ -81,19 +83,54 @@ export function PlacesProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
   const [notice, setNotice] = useState('');
   const writeQueue = useRef(Promise.resolve());
+  const pending = useRef<string[]>([]);
+  const cloudReady = useRef(false);
+  const stateRef = useRef(state);
+
+  // ref 只在 effect 里更新，避免在渲染期间读写 ref（react-hooks/refs）
+  useEffect(() => { stateRef.current = state; }, [state]);
 
   useEffect(() => {
     let active = true;
-    AsyncStorage.getItem(key).then(raw => {
-      if (!active || !raw) return;
-      const stored = JSON.parse(raw) as State;
-      if (!Array.isArray(stored.places) || !stored.places.length || !stored.places.every(validPlace)
-        || !Array.isArray(stored.arrived) || !stored.arrived.every(id => typeof id === 'string')
-        || !Array.isArray(stored.saved) || !stored.saved.every(id => typeof id === 'string')) throw new Error('invalid demo data');
-      setState(stored);
-    }).catch(() => {
-      if (active) setNotice('本机记录读取失败，当前展示初始演示内容。');
-    }).finally(() => { if (active) setReady(true); });
+    (async () => {
+      // 1) 本机缓存先渲染：弱网/离线时 App 仍可用
+      try {
+        const raw = await AsyncStorage.getItem(key);
+        if (raw) {
+          const stored = JSON.parse(raw) as State;
+          if (!Array.isArray(stored.places) || !stored.places.length || !stored.places.every(validPlace)
+            || !Array.isArray(stored.arrived) || !stored.arrived.every(id => typeof id === 'string')
+            || !Array.isArray(stored.saved) || !stored.saved.every(id => typeof id === 'string')) throw new Error('invalid cache');
+          if (active) setState(stored);
+        }
+      } catch {
+        if (active) setNotice('本机记录读取失败，当前展示初始演示内容。');
+      } finally {
+        if (active) setReady(true);
+      }
+
+      // 2) 云端共享留话；失败只提示，绝不假装已同步
+      try {
+        const remote = await fetchCloudPlaces();
+        if (!active) return;
+        cloudReady.current = true;
+        if (remote.length === 0) {
+          // 首次接入：把本机演示内容作为第一批共享数据写入云端
+          const seeds = stateRef.current.places;
+          void Promise.all(seeds.map(place => putCloudPlace(place))).catch(error => {
+            if (active) setNotice('初始化云端数据失败：' + cloudErrorMessage(error));
+          });
+          return;
+        }
+        const remoteIds = new Set(remote.map(place => place.id));
+        const localOnly = stateRef.current.places.filter(
+          place => place.id.startsWith('local-') && !remoteIds.has(place.id),
+        );
+        setState(current => ({ ...current, places: [...remote, ...localOnly] }));
+      } catch (error) {
+        if (active) setNotice('云端同步暂不可用，改动先留在本机：' + cloudErrorMessage(error));
+      }
+    })();
     return () => { active = false; };
   }, []);
 
@@ -102,6 +139,17 @@ export function PlacesProvider({ children }: { children: React.ReactNode }) {
     const serialized = JSON.stringify(state);
     writeQueue.current = writeQueue.current.then(() => AsyncStorage.setItem(key, serialized)).catch(() => {
       setNotice('本机保存失败，关闭后这次修改可能丢失。');
+    });
+
+    // 只把用户操作产生的变更推上云，避免把刚拉回的数据又写回去
+    const ids = pending.current.splice(0);
+    if (!cloudReady.current || ids.length === 0) return;
+    ids.forEach(id => {
+      const place = state.places.find(item => item.id === id);
+      if (!place) return;
+      void putCloudPlace(place).catch(error => {
+        setNotice('云端保存失败，改动已留在本机：' + cloudErrorMessage(error));
+      });
     });
   }, [state, ready]);
 
@@ -117,6 +165,7 @@ export function PlacesProvider({ children }: { children: React.ReactNode }) {
   function like(id: string, fix?: Fix | null) {
     setState(current => ({ ...current, places: current.places.map(place => {
       if (place.id !== id || !(place.point ? atPoint(fix, place.point) : current.arrived.includes(id))) return place;
+      pending.current.push(id);
       return { ...place, liked: !place.liked, likes: place.likes + (place.liked ? -1 : 1) };
     }) }));
   }
@@ -124,12 +173,14 @@ export function PlacesProvider({ children }: { children: React.ReactNode }) {
     if (!text.trim()) return;
     setState(current => ({ ...current, places: current.places.map(place => {
       if (place.id !== id || (!place.participated && !(place.point ? atPoint(fix, place.point) : current.arrived.includes(id)))) return place;
+      pending.current.push(id);
       return { ...place, participated: true, replies: [...place.replies, { id: Date.now() + '-' + Math.random(), text: text.trim(), mine: true }] };
     }) }));
   }
   function create(name: string, location: string, text: string, point?: Point, media?: PlaceMedia, customLocation?: true | string) {
     const id = 'local-' + Date.now() + '-' + Math.random().toString(36).slice(2);
     const place: Place = { id, name: name.trim() || '现场留话', location: location.trim(), text: text.trim(), teaser: text.trim() || (media?.kind === 'photo' ? '一张现场照片' : media?.kind === 'voice' ? '一段现场语音' : ''), distance: 0, point, media, customLocationId: customLocation === true ? id : customLocation, mood: 'sage', likes: 0, liked: false, participated: true, owned: true, replies: [] };
+    pending.current.push(id);
     setState(current => ({ ...current, places: [place, ...current.places], arrived: point ? current.arrived : [...current.arrived, id] }));
     return id;
   }
