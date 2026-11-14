@@ -5,10 +5,11 @@ import { StatusBar } from 'expo-status-bar';
 import { EntryProvider } from '../state/entry';
 import { ProfileProvider } from '../state/profile';
 import { PlacesProvider } from '../state/places';
+import { IdentityProvider } from '../state/identity';
 import { colors } from '../components/ui';
 
 export default function RootLayout() {
-  return <View style={{ flex: 1, backgroundColor: '#090c0b' }}><View style={{ flex: 1, width: '100%', maxWidth: Platform.OS === 'web' ? 480 : undefined, alignSelf: 'center' }}><ThemeProvider value={DarkTheme}><PlacesProvider><ProfileProvider><EntryProvider><StatusBar style="light" />
+  return <View style={{ flex: 1, backgroundColor: '#090c0b' }}><View style={{ flex: 1, width: '100%', maxWidth: Platform.OS === 'web' ? 480 : undefined, alignSelf: 'center' }}><ThemeProvider value={DarkTheme}><IdentityProvider><PlacesProvider><ProfileProvider><EntryProvider><StatusBar style="light" />
     <Stack screenOptions={{ headerStyle: { backgroundColor: colors.background }, headerTintColor: colors.text, headerShadowVisible: false, contentStyle: { backgroundColor: colors.background } }}>
       <Stack.Screen name="index" options={{ headerShown: false }} />
       <Stack.Screen name="welcome" options={{ headerShown: false, contentStyle: { backgroundColor: '#000' } }} />
@@ -22,5 +23,5 @@ export default function RootLayout() {
       <Stack.Screen name="profile/activity" options={{ title: '我的记录', headerBackTitle: '返回' }} />
       <Stack.Screen name="place/[id]" options={{ title: '这个地方', headerBackTitle: '返回' }} />
     </Stack>
-  </EntryProvider></ProfileProvider></PlacesProvider></ThemeProvider></View></View>;
+  </EntryProvider></ProfileProvider></PlacesProvider></IdentityProvider></ThemeProvider></View></View>;
 }

@@ -2,7 +2,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { router } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useProfile } from '../state/profile';
-import { usePlaces } from '../state/places';
+import { isMyPlace, usePlaces } from '../state/places';
 import { Avatar } from '../components/Avatar';
 import { colors, Loading, Screen } from '../components/ui';
 
@@ -11,7 +11,7 @@ export default function MeScreen() {
   const store = usePlaces();
   if (!ready || !store.ready) return <Loading />;
   const items = [
-    { key: 'owned', icon: 'create-outline' as const, title: '我的留话', description: '在某个地方，留下的声音', count: store.places.filter(p => p.owned).length },
+    { key: 'owned', icon: 'create-outline' as const, title: '我的留话', description: '在某个地方，留下的声音', count: store.places.filter(p => isMyPlace(p, store.authorId)).length },
     { key: 'joined', icon: 'chatbubble-ellipses-outline' as const, title: '参与的对话', description: '离开现场，也能接着聊', count: store.places.filter(p => p.participated).length },
     { key: 'saved', icon: 'bookmark-outline' as const, title: '想去的地方', description: '给下一次出门留点期待', count: store.saved.filter(id => store.places.some(p => p.id === id)).length },
   ];
