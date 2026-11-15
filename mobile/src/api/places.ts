@@ -2,14 +2,17 @@ import { collection, ensureSignedIn, type Doc } from './cloud';
 import { PLACES_COLLECTION } from './config';
 import type { Place } from '../state/places';
 
-/** 云端文档不写 owned：作者归属只由 authorId 决定，避免把「这是我的」广播给所有设备。 */
-type StoredPlace = Omit<Place, 'id' | 'owned'> & { _id: string };
-
-function toDoc(place: Place): StoredPlace {
-  const doc: Record<string, unknown> = { ...place, _id: place.id };
+/**
+ * 写入云端的文档内容。
+ * Web / JS SDK 的 doc(id).set(data) 把参数直接当文档内容（不是小程序端的 { data: ... }），
+ * 且参数里不允许出现 _id（_id 由 doc(id) 指定、数据库自动维护，否则报「不能更新_id的值」）。
+ * 因此这里既不包一层 data，也不带 _id / id / owned。
+ */
+function toDoc(place: Place): Record<string, unknown> {
+  const doc: Record<string, unknown> = { ...place };
   delete doc.id;
   delete doc.owned;
-  return doc as unknown as StoredPlace;
+  return doc;
 }
 
 /** 云端脏数据不能污染 UI：这里做一次最小结构校验。 */
@@ -63,10 +66,10 @@ export async function fetchCloudPlaces(limit = 100): Promise<Place[]> {
   return data.map(fromDoc).filter((place): place is Place => place !== null);
 }
 
-/** 新增或修改一条留话；doc(_id).set 同时覆盖新建与更新。 */
+/** 新增或修改一条留话；doc(id).set 带 upsert，文档不存在时自动创建。 */
 export async function putCloudPlace(place: Place): Promise<void> {
   await ensureSignedIn();
-  await collection(PLACES_COLLECTION).doc(place.id).set({ data: toDoc(place) });
+  await collection(PLACES_COLLECTION).doc(place.id).set(toDoc(place));
 }
 
 /** 真删除云端文档，不写墓碑；删除失败由调用方明确提示，不静默放行。 */
