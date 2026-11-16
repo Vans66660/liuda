@@ -3,12 +3,14 @@ import { router } from 'expo-router';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { useProfile } from '../state/profile';
 import { isMyPlace, usePlaces } from '../state/places';
+import { useIdentity } from '../state/identity';
 import { Avatar } from '../components/Avatar';
 import { colors, Loading, Screen } from '../components/ui';
 
 export default function MeScreen() {
   const { profile, ready, notice } = useProfile();
   const store = usePlaces();
+  const { isInvite, signOut } = useIdentity();
   if (!ready || !store.ready) return <Loading />;
   const items = [
     { key: 'owned', icon: 'create-outline' as const, title: '我的留话', description: '在某个地方，留下的声音', count: store.places.filter(p => isMyPlace(p, store.authorId)).length },
@@ -30,7 +32,8 @@ export default function MeScreen() {
     <View style={s.menu}>{items.map((item, index) => <Pressable key={item.key} accessibilityRole="button" accessibilityLabel={`${item.title}，${item.count} 条`} onPress={() => router.push({ pathname: '/profile/activity', params: { view: item.key } })} style={({ pressed }) => [s.menuItem, index > 0 && s.divider, pressed && { opacity: 0.6 }]}>
       <Ionicons name={item.icon} size={22} color="#d4ddca" /><View style={{ flex: 1, gap: 5 }}><Text style={s.menuTitle}>{item.title}</Text><Text style={s.description}>{item.description}</Text></View><Text style={s.count}>{item.count}</Text><Ionicons name="chevron-forward" size={15} color="#72796c" />
     </Pressable>)}</View>
-    <Pressable accessibilityRole="button" onPress={() => router.push('/login')} style={s.setting}><Text style={s.settingText}>账号与登录</Text><Text style={s.edit}>尚未接入</Text><Ionicons name="chevron-forward" size={15} color="#72796c" /></Pressable>
+    <Pressable accessibilityRole="button" onPress={() => router.push('/login')} style={s.setting}><Text style={s.settingText}>账号与登录</Text><Text style={s.edit}>{isInvite ? '邀请码已登录' : '游客模式'}</Text><Ionicons name="chevron-forward" size={15} color="#72796c" /></Pressable>
+    {isInvite ? <Pressable accessibilityRole="button" onPress={() => { void signOut().then(() => router.replace('/welcome')); }} style={s.setting}><Text style={s.settingText}>退出登录</Text><Text style={s.edit}>切换到游客模式</Text><Ionicons name="chevron-forward" size={15} color="#72796c" /></Pressable> : null}
     <Pressable accessibilityRole="link" onPress={() => router.push('/about-privacy')} style={s.setting}><Text style={s.settingText}>匿名与数据</Text><Ionicons name="chevron-forward" size={15} color="#72796c" /></Pressable>
     <Text style={s.footer}>本机体验 · 资料和记录暂不支持跨设备恢复</Text>
   </ScrollView></Screen>;

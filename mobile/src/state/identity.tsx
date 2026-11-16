@@ -32,10 +32,19 @@ async function loadAuthorId(): Promise<string> {
 
 type IdentityValue = {
   authorId: string | null;
+  /** 当前是否用邀请码身份（false 表示游客/未登录）。 */
+  isInvite: boolean;
   signInWithInvite: (code: string) => Promise<void>;
+  /** 退出当前身份：清掉本机身份标识，回到未登录（下次进入会重新分配游客身份）。 */
+  signOut: () => Promise<void>;
 };
 
-const IdentityContext = createContext<IdentityValue>({ authorId: null, signInWithInvite: async () => {} });
+const IdentityContext = createContext<IdentityValue>({
+  authorId: null,
+  isInvite: false,
+  signInWithInvite: async () => {},
+  signOut: async () => {},
+});
 
 export function IdentityProvider({ children }: { children: ReactNode }) {
   const [authorId, setAuthorId] = useState<string | null>(null);
@@ -49,7 +58,15 @@ export function IdentityProvider({ children }: { children: ReactNode }) {
     try { await AsyncStorage.setItem(key, next); } catch { /* 本次会话仍生效 */ }
     setAuthorId(next);
   }
-  return <IdentityContext.Provider value={{ authorId, signInWithInvite }}>{children}</IdentityContext.Provider>;
+  async function signOut() {
+    // 退回游客身份而不是留空：保持"我的留话"归属判断可用，也避免下次启动重复分配。
+    const guest = 'guest-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+    try { await AsyncStorage.setItem(key, guest); } catch { /* 本次会话仍生效 */ }
+    setAuthorId(guest);
+  }
+  // 邀请码派生的 id 前缀是 inv-，游客是 guest-
+  const isInvite = typeof authorId === 'string' && authorId.startsWith('inv-');
+  return <IdentityContext.Provider value={{ authorId, isInvite, signInWithInvite, signOut }}>{children}</IdentityContext.Provider>;
 }
 
 export const useIdentity = () => useContext(IdentityContext);
