@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { AccessibilityInfo, Alert, FlatList, Image, Pressable, ScrollView, StyleSheet, Text, View, type ImageSourcePropType } from 'react-native';
+import { AccessibilityInfo, Alert, FlatList, Image, Pressable, RefreshControl, ScrollView, StyleSheet, Text, View, type ImageSourcePropType } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import Ionicons from '@expo/vector-icons/Ionicons';
 import { router, useFocusEffect, usePathname } from 'expo-router';
@@ -195,10 +195,16 @@ export default function DiscoverScreen() {
   const { profile, ready: profileReady } = useProfile();
   const [height, setHeight] = useState(0);
   const [visibleId, setVisibleId] = useState<string>();
+  const [refreshing, setRefreshing] = useState(false);
   const focused = usePathname() === '/discover';
   const onViewableItemsChanged = useCallback(({ viewableItems }: { viewableItems: { item: Place }[] }) => {
     setVisibleId(viewableItems[0]?.item.id);
   }, []);
+  async function onRefresh() {
+    setRefreshing(true);
+    await store.refresh();
+    setRefreshing(false);
+  }
   if (!store.ready || !profileReady) return <Loading />;
   return <Screen>
     <View style={styles.header}>
@@ -210,7 +216,7 @@ export default function DiscoverScreen() {
     </View>
     {store.notice ? <Text style={styles.notice}>{store.notice}</Text> : null}
     <View style={styles.feed} onLayout={event => setHeight(event.nativeEvent.layout.height)}>
-      {height > 0 && <FlatList key={Math.round(height)} data={store.places} extraData={[store.arrived, store.saved, visibleId, focused]} viewabilityConfig={viewabilityConfig} onViewableItemsChanged={onViewableItemsChanged} keyExtractor={place => place.id} pagingEnabled decelerationRate="fast" showsVerticalScrollIndicator={false} initialNumToRender={2} maxToRenderPerBatch={2} windowSize={3} getItemLayout={(_, index) => ({ length: height, offset: height * index, index })} renderItem={({ item }) => <PlaceCard place={item} height={height} active={focused && visibleId === item.id} />} />}
+      {height > 0 && <FlatList key={Math.round(height)} data={store.places} extraData={[store.arrived, store.saved, visibleId, focused]} viewabilityConfig={viewabilityConfig} onViewableItemsChanged={onViewableItemsChanged} keyExtractor={place => place.id} pagingEnabled decelerationRate="fast" showsVerticalScrollIndicator={false} initialNumToRender={2} maxToRenderPerBatch={2} windowSize={3} getItemLayout={(_, index) => ({ length: height, offset: height * index, index })} refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} tintColor={colors.muted} />} renderItem={({ item }) => <PlaceCard place={item} height={height} active={focused && visibleId === item.id} />} />}
     </View>
     <Text style={styles.swipeHint}>向上滑，遇见下一个地方</Text>
   </Screen>;
