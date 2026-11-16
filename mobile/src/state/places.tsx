@@ -1,12 +1,22 @@
+import { AppState } from 'react-native';
+import { File } from 'expo-file-system';
+import { placeMediaUri, type PlaceMedia } from '../components/LeaveMedia';
+import { atPoint, isPoint, type Fix, type Point } from '../location/geo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
+import { fetchCloudPlaces, putCloudPlace, removeCloudPlace } from '../api/places';
+import { cloudErrorMessage } from '../api/cloud';
+import { useIdentity } from './identity';
 
-export type Reply = { id: string; text: string; mine: boolean };
+export type Reply = { id: string; text: string; mine: boolean; authorId?: string };
 export type Place = {
   id: string;
   name: string;
   location: string;
   distance: number;
+  point?: Point;
+  customLocationId?: string;
+  media?: PlaceMedia;
   teaser: string;
   text: string;
   mood: 'sage' | 'sand' | 'blue';
@@ -14,9 +24,20 @@ export type Place = {
   liked: boolean;
   participated: boolean;
   owned: boolean;
+  authorId?: string;
   replies: Reply[];
   task?: { title: string; reward: number; requirement: string };
 };
+
+/** 删除权限只认 authorId；旧版本本机缓存没有 authorId 时，才回退到本机 owned / mine 标记。 */
+export function isMyPlace(place: Pick<Place, 'authorId' | 'owned'>, authorId: string | null): boolean {
+  if (!authorId) return false;
+  return place.authorId ? place.authorId === authorId : place.owned === true;
+}
+export function isMyReply(reply: Pick<Reply, 'authorId' | 'mine'>, authorId: string | null): boolean {
+  if (!authorId) return false;
+  return reply.authorId ? reply.authorId === authorId : reply.mine === true;
+}
 
 const initialPlaces: Place[] = [
   {
@@ -42,59 +63,182 @@ const initialPlaces: Place[] = [
   },
 ];
 
-type State = { places: Place[]; arrived: string[]; saved: string[] };
+/** removed 是本机删除记录，用于云端删除失败时防止重启后把文档拉回来「复活」。 */
+type State = { places: Place[]; arrived: string[]; saved: string[]; removed: string[] };
 type Store = State & {
   ready: boolean;
   notice: string;
+  authorId: string | null;
   arrive: (id: string) => void;
   depart: (id: string) => void;
   save: (id: string) => void;
-  like: (id: string) => void;
-  reply: (id: string, text: string) => void;
-  create: (name: string, location: string, text: string) => string;
+  like: (id: string, fix?: Fix | null) => void;
+  reply: (id: string, text: string, fix?: Fix | null) => void;
+  create: (name: string, location: string, text: string, point?: Point, media?: PlaceMedia, customLocation?: true | string) => string;
+  removePlace: (id: string) => Promise<boolean>;
+  removeReply: (placeId: string, replyId: string) => boolean;
+  /** 手动下拉刷新：重新拉云端共享留话并合并，返回是否成功。 */
+  refresh: () => Promise<void>;
 };
 const Context = createContext<Store | null>(null);
-const key = 'liuda-mobile-demo-v1';
+
+/** 本地缓存按账号隔离，避免切换邀请码后串数据。 */
+function cacheKey(authorId: string | null): string {
+  return authorId ? `liuda-places-${authorId}` : 'liuda-places-guest';
+}
 
 function validPlace(value: unknown): value is Place {
   if (!value || typeof value !== 'object') return false;
   const place = value as Place;
   return ['id', 'name', 'location', 'teaser', 'text'].every(field => typeof (place as unknown as Record<string, unknown>)[field] === 'string')
     && ['sage', 'sand', 'blue'].includes(place.mood)
+    && (place.point === undefined || isPoint(place.point))
+    && (place.customLocationId === undefined || typeof place.customLocationId === 'string')
+    && (place.authorId === undefined || typeof place.authorId === 'string')
+    && (place.media === undefined || (!!place.media && ['photo', 'voice'].includes(place.media.kind)
+      && typeof place.media.file === 'string' && /^leave-[a-z0-9-]+[.](jpg|m4a)$/.test(place.media.file)))
     && Number.isFinite(place.distance) && Number.isFinite(place.likes)
     && ['liked', 'participated', 'owned'].every(field => typeof (place as unknown as Record<string, unknown>)[field] === 'boolean')
-    && Array.isArray(place.replies) && place.replies.every(reply => typeof reply.id === 'string' && typeof reply.text === 'string' && typeof reply.mine === 'boolean')
+    && Array.isArray(place.replies) && place.replies.every(reply => typeof reply.id === 'string' && typeof reply.text === 'string'
+      && typeof reply.mine === 'boolean' && (reply.authorId === undefined || typeof reply.authorId === 'string'))
     && (!place.task || (typeof place.task.title === 'string' && Number.isFinite(place.task.reward) && typeof place.task.requirement === 'string'));
 }
 
 export function PlacesProvider({ children }: { children: React.ReactNode }) {
-  const [state, setState] = useState<State>({ places: initialPlaces, arrived: [], saved: [] });
-  const [ready, setReady] = useState(false);
+  const { authorId, touch } = useIdentity();
+  const [state, setState] = useState<State>({ places: initialPlaces, arrived: [], saved: [], removed: [] });
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
   const [notice, setNotice] = useState('');
+  // ready 由「缓存已为哪个账号加载」派生：切换账号时自动变 false，无需在 effect 里同步 setState
+  const ready = authorId !== null && loadedFor === authorId;
   const writeQueue = useRef(Promise.resolve());
+  const pending = useRef<string[]>([]);
+  const uploading = useRef(new Set<string>());
+  const stateRef = useRef(state);
+  const refreshBusy = useRef(false);
 
+  // ref 只在 effect 里更新，避免在渲染期间读写 ref（react-hooks/refs）
+  useEffect(() => { stateRef.current = state; }, [state]);
+
+  const uploadPending = useCallback(async (snapshot: State): Promise<void> => {
+    const queue = pending.current;
+    const ids = [...new Set(queue.splice(0))];
+    for (const id of ids) uploading.current.add(id);
+    for (const id of ids) {
+      try {
+        const place = snapshot.places.find(item => item.id === id);
+        if (place && !stateRef.current.removed.includes(id)) await putCloudPlace(place);
+      } catch (error) {
+        queue.push(id);
+        if (pending.current === queue) setNotice('云端保存失败，将自动重试：' + cloudErrorMessage(error));
+      } finally {
+        uploading.current.delete(id);
+      }
+    }
+    if (ids.length && pending.current === queue && !queue.length) void touch();
+  }, [touch]);
+
+  const syncCloud = useCallback(async (active: () => boolean): Promise<void> => {
+    if (refreshBusy.current || uploading.current.size) return;
+    refreshBusy.current = true;
+    try {
+      await uploadPending(stateRef.current);
+      if (!active()) return;
+      const remote = await fetchCloudPlaces();
+      if (!active()) return;
+      setState(current => {
+        const unsynced = new Set([...pending.current, ...uploading.current]);
+        const local = current.places.filter(place => unsynced.has(place.id));
+        return {
+          ...current,
+          places: [...local, ...remote.filter(place => !unsynced.has(place.id) && !current.removed.includes(place.id))],
+        };
+      });
+      if (!pending.current.length) setNotice('');
+    } catch (error) {
+      if (active()) setNotice('云端同步暂不可用：' + cloudErrorMessage(error));
+    } finally {
+      refreshBusy.current = false;
+    }
+  }, [uploadPending]);
+
+  const activeAccount = useRef<string | null>(null);
+  useEffect(() => {
+    activeAccount.current = ready ? authorId : null;
+    if (!ready || !authorId) return;
+    const active = () => activeAccount.current === authorId;
+    const refreshForeground = () => {
+      if (AppState.currentState === 'active') void syncCloud(active);
+    };
+    void syncCloud(active);
+    const timer = setInterval(refreshForeground, 5000);
+    const subscription = AppState.addEventListener('change', refreshForeground);
+    return () => {
+      activeAccount.current = null;
+      clearInterval(timer);
+      subscription.remove();
+    };
+  }, [authorId, ready, syncCloud]);
+
+  // authorId 变化（含首次登录、切换邀请码）时：加载对应账号缓存 → 拉云端
   useEffect(() => {
     let active = true;
-    AsyncStorage.getItem(key).then(raw => {
-      if (!active || !raw) return;
-      const stored = JSON.parse(raw) as State;
-      if (!Array.isArray(stored.places) || !stored.places.length || !stored.places.every(validPlace)
-        || !Array.isArray(stored.arrived) || !stored.arrived.every(id => typeof id === 'string')
-        || !Array.isArray(stored.saved) || !stored.saved.every(id => typeof id === 'string')) throw new Error('invalid demo data');
-      setState(stored);
-    }).catch(() => {
-      if (active) setNotice('本机记录读取失败，当前展示初始演示内容。');
-    }).finally(() => { if (active) setReady(true); });
+    const storageKey = cacheKey(authorId);
+    pending.current = [];
+
+    (async () => {
+      // 1) 本机缓存先渲染（按账号隔离）
+      let loaded = false;
+      try {
+        const raw = await AsyncStorage.getItem(storageKey);
+        if (raw) {
+          const stored = JSON.parse(raw) as State & { pendingUploads?: string[] };
+          const removed = Array.isArray(stored.removed) ? stored.removed : [];
+          if (!Array.isArray(stored.places) || !stored.places.every(validPlace)
+            || !Array.isArray(stored.arrived) || !stored.arrived.every(id => typeof id === 'string')
+            || !Array.isArray(stored.saved) || !stored.saved.every(id => typeof id === 'string')
+            || !removed.every(id => typeof id === 'string')) throw new Error('invalid cache');
+          if (active) {
+            const { pendingUploads, ...cached } = stored;
+            pending.current = Array.isArray(pendingUploads)
+              ? pendingUploads.filter(id => typeof id === 'string')
+              : [];
+            setState({ ...cached, removed });
+          }
+          loaded = true;
+        }
+      } catch {
+        if (active) setNotice('本机记录读取失败，当前展示初始演示内容。');
+      }
+      if (active && !loaded) {
+        // 该账号无本地缓存：重置为初始演示内容（游客或首次登录的干净起点）
+        setState({ places: initialPlaces, arrived: [], saved: [], removed: [] });
+      }
+      // 缓存就绪
+      if (active) setLoadedFor(authorId);
+
+    })();
     return () => { active = false; };
-  }, []);
+  }, [authorId]);
+
+  const refresh = useCallback(async (): Promise<void> => {
+    if (!ready || !authorId) return;
+    void touch();
+    await syncCloud(() => activeAccount.current === authorId);
+  }, [authorId, ready, syncCloud, touch]);
 
   useEffect(() => {
-    if (!ready) return;
-    const serialized = JSON.stringify(state);
-    writeQueue.current = writeQueue.current.then(() => AsyncStorage.setItem(key, serialized)).catch(() => {
+    if (!ready || !authorId) return;
+    const storageKey = cacheKey(authorId);
+    const serialized = JSON.stringify({ ...state, pendingUploads: [...new Set([...pending.current, ...uploading.current])] });
+    writeQueue.current = writeQueue.current.then(() => AsyncStorage.setItem(storageKey, serialized)).catch(() => {
       setNotice('本机保存失败，关闭后这次修改可能丢失。');
     });
-  }, [state, ready]);
+
+    if (pending.current.length && !refreshBusy.current && !uploading.current.size) {
+      void syncCloud(() => activeAccount.current === authorId);
+    }
+  }, [state, ready, authorId, syncCloud]);
 
   function arrive(id: string) {
     setState(current => ({ ...current, arrived: [...new Set([...current.arrived, id])] }));
@@ -105,26 +249,70 @@ export function PlacesProvider({ children }: { children: React.ReactNode }) {
   function save(id: string) {
     setState(current => ({ ...current, saved: current.saved.includes(id) ? current.saved.filter(value => value !== id) : [...current.saved, id] }));
   }
-  function like(id: string) {
+  function like(id: string, fix?: Fix | null) {
     setState(current => ({ ...current, places: current.places.map(place => {
-      if (place.id !== id || !current.arrived.includes(id)) return place;
+      if (place.id !== id || !(place.point ? atPoint(fix, place.point) : current.arrived.includes(id))) return place;
+      pending.current.push(id);
       return { ...place, liked: !place.liked, likes: place.likes + (place.liked ? -1 : 1) };
     }) }));
   }
-  function reply(id: string, text: string) {
+  function reply(id: string, text: string, fix?: Fix | null) {
     if (!text.trim()) return;
     setState(current => ({ ...current, places: current.places.map(place => {
-      if (place.id !== id || (!place.participated && !current.arrived.includes(id))) return place;
-      return { ...place, participated: true, replies: [...place.replies, { id: Date.now() + '-' + Math.random(), text: text.trim(), mine: true }] };
+      if (place.id !== id || (!place.participated && !(place.point ? atPoint(fix, place.point) : current.arrived.includes(id)))) return place;
+      pending.current.push(id);
+      return { ...place, participated: true, replies: [...place.replies, { id: Date.now() + '-' + Math.random(), text: text.trim(), mine: true, authorId: authorId ?? undefined }] };
     }) }));
   }
-  function create(name: string, location: string, text: string) {
+  function create(name: string, location: string, text: string, point?: Point, media?: PlaceMedia, customLocation?: true | string) {
     const id = 'local-' + Date.now() + '-' + Math.random().toString(36).slice(2);
-    const place: Place = { id, name: name.trim(), location: location.trim(), text: text.trim(), teaser: text.trim(), distance: 0, mood: 'sage', likes: 0, liked: false, participated: true, owned: true, replies: [] };
-    setState(current => ({ ...current, places: [place, ...current.places], arrived: [...current.arrived, id] }));
+    const place: Place = { id, name: name.trim() || '现场留话', location: location.trim(), text: text.trim(), teaser: text.trim() || (media?.kind === 'photo' ? '一张现场照片' : media?.kind === 'voice' ? '一段现场语音' : ''), distance: 0, point, media, customLocationId: customLocation === true ? id : customLocation, mood: 'sage', likes: 0, liked: false, participated: true, owned: true, authorId: authorId ?? undefined, replies: [] };
+    pending.current.push(id);
+    setState(current => ({ ...current, places: [place, ...current.places], arrived: point ? current.arrived : [...current.arrived, id] }));
     return id;
   }
-  return <Context.Provider value={{ ...state, ready, notice, arrive, depart, save, like, reply, create }}>{children}</Context.Provider>;
+
+  /** 真删除：只删自己的发帖。云端删除失败也保留本机删除结果，但会明确提示。 */
+  async function removePlace(id: string): Promise<boolean> {
+    const place = stateRef.current.places.find(item => item.id === id);
+    if (!place || !isMyPlace(place, authorId)) return false;
+    if (uploading.current.has(id)) {
+      setNotice('这条留话正在同步，请稍后再删除。');
+      return false;
+    }
+    const mediaUri = place.media ? placeMediaUri(place.media) : null;
+    pending.current = pending.current.filter(value => value !== id);
+    setState(current => ({
+      ...current,
+      places: current.places.filter(item => item.id !== id),
+      arrived: current.arrived.filter(value => value !== id),
+      saved: current.saved.filter(value => value !== id),
+      removed: [...new Set([...current.removed, id])],
+    }));
+    if (mediaUri) { try { new File(mediaUri).delete(); } catch { /* 文件可能已被系统清理 */ } }
+    try {
+      await removeCloudPlace(id);
+    } catch (error) {
+      setNotice('本机已删除，云端删除失败：' + cloudErrorMessage(error) + '。其他设备可能仍能看到，请稍后重试。');
+    }
+    return true;
+  }
+
+  /** 删除自己的接话：整份 Place 文档写回云端，不删除原帖。 */
+  function removeReply(placeId: string, replyId: string): boolean {
+    const place = stateRef.current.places.find(item => item.id === placeId);
+    const reply = place?.replies.find(item => item.id === replyId);
+    if (!place || !reply || !isMyReply(reply, authorId)) return false;
+    pending.current.push(placeId);
+    setState(current => ({ ...current, places: current.places.map(item => {
+      if (item.id !== placeId) return item;
+      const replies = item.replies.filter(value => value.id !== replyId);
+      return { ...item, replies, participated: isMyPlace(item, authorId) || replies.some(value => isMyReply(value, authorId)) };
+    }) }));
+    return true;
+  }
+
+  return <Context.Provider value={{ ...state, ready, notice, authorId, arrive, depart, save, like, reply, create, removePlace, removeReply, refresh }}>{children}</Context.Provider>;
 }
 
 export function usePlaces() {

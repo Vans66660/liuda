@@ -1,5 +1,7 @@
 # 附近留话列表重设计
 
+> 初代微信小程序历史文档。当前 App 开发请看 [仓库首页](../README.md)。
+
 日期：2026-10-28。任务：[Issue #16](https://github.com/Vans66660/liuda/issues/16)。
 
 ## 设计与交互

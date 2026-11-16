@@ -1,0 +1,29 @@
+/**
+ * CloudBase 环境 ID。
+ * 这是公开配置 —— SDK 初始化本来就会把它暴露在客户端，不是密钥。
+ * 切勿把 SecretId / SecretKey / API 密钥写进这里或任何前端文件。
+ */
+export const CLOUDBASE_ENV_ID = 'test-1-liuda-d9gz3uwf4e5f25e29';
+
+/**
+ * Publishable Key（公开凭证，可安全放进前端）。
+ * 对应匿名角色，用它直接访问资源，无需登录 —— 绕开免费环境上失效的匿名登录接口。
+ * 官方说明：Publishable Key 可暴露在浏览器，长期有效，只生成一次不能删除。
+ * 这仍是公开配置，不是 SecretId / SecretKey / API Key，后三者绝不能写进这里。
+ */
+export const CLOUDBASE_PUBLISHABLE_KEY = 'eyJhbGciOiJSUzI1NiIsImtpZCI6IjUxYjYwZWY3LWI4NGEtNGI5Zi1iMWU0LTE1ZTU3MTI5NTc2MSJ9.eyJpc3MiOiJodHRwczovL3Rlc3QtMS1saXVkYS1kOWd6M3V3ZjRlNWYyNWUyOS5hcC1zaGFuZ2hhaS50Y2ItYXBpLnRlbmNlbnRjbG91ZGFwaS5jb20iLCJzdWIiOiJhbm9uIiwiYXVkIjoidGVzdC0xLWxpdWRhLWQ5Z3ozdXdmNGU1ZjI1ZTI5IiwiZXhwIjo0MDk4NDk3NDQzLCJpYXQiOjE3OTQ4MTQyNDMsIm5vbmNlIjoiSHVXM3U4OUVSZ3FGeXhuOXoxcVdlZyIsImF0X2hhc2giOiJIdVczdTg5RVJncUZ5eG45ejFxV2VnIiwibmFtZSI6IkFub255bW91cyIsInNjb3BlIjoiYW5vbnltb3VzIiwicHJvamVjdF9pZCI6InRlc3QtMS1saXVkYS1kOWd6M3V3ZjRlNWYyNWUyOSIsIm1ldGEiOnsicGxhdGZvcm0iOiJQdWJsaXNoYWJsZUtleSJ9LCJyb2xlIjoiYW5vbiIsImlzX2Fub255bW91cyI6dHJ1ZSwiYXBwX21ldGFkYXRhIjp7InByb3ZpZGVyIjoiYW5vbnltb3VzIiwicHJvdmlkZXJzIjpbImFub255bW91cyJdfSwidXNlcl9tZXRhZGF0YSI6eyJuYW1lIjoiQW5vbnltb3VzIn0sInVzZXJfdHlwZSI6IiIsImNsaWVudF90eXBlIjoiY2xpZW50X3VzZXIiLCJpc19zeXN0ZW1fYWRtaW4iOmZhbHNlfQ.SJNESZlhFt6Zb0AyDRROZ32IHG3lvHIpXp2iYJvoUc6t5hxR8DU3OYZ5QI1QkLhduwvXXzUMOaAc-pXBVFljwnD73eTLQ_I7rYuuRyMqLAN86u6teaWu8V0-ZQ6mmJTIHVLvUkIxFsBWxCnToQdsDgWDBxpMQxS5bdrv3jgMLX7T9PBiQ--9DyGV596OiYDacE-OjvBgaxBKx7AFwOoYuiJt1SKcKWWsXNz9bHyLQN9121oGAI0YioPOZk5l3EaHd6u1eYGNJI2Fns7bSLn8dCcS423tsAZqeRtO7PlqD5-AbVtx6IOuHSPKTBps-9Qbpce39Wp7VWdQ4RkNi6QHOw';
+
+/** 团队内部邀请码集合（文档型数据库）。字段：code, active, note */
+export const INVITE_COLLECTION = 'invite_codes';
+
+/** 地点留话集合（文档型数据库）。文档 _id 对应 Place.id */
+export const PLACES_COLLECTION = 'places';
+
+/** 账号资料集合（文档型数据库）。文档 _id 对应 authorId；字段 nickname, avatar, updatedAt */
+export const PROFILES_COLLECTION = 'profiles';
+
+/** 登录占用集合（文档型数据库）。文档 _id 对应 authorId；字段 deviceId, lastSeen */
+export const SESSIONS_COLLECTION = 'sessions';
+
+/** 邀请码占用有效期：lastSeen 超过该毫秒数视为设备已离线，允许其他设备登录。 */
+export const SESSION_TTL_MS = 10 * 60 * 1000;

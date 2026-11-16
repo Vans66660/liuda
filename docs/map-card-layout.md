@@ -1,5 +1,7 @@
 # 地图留话卡片整理
 
+> 初代微信小程序历史文档。当前 App 开发请看 [仓库首页](../README.md)。
+
 日期：2026-10-28。任务：[Issue #14](https://github.com/Vans66660/liuda/issues/14)。
 
 ## 改动

@@ -1,5 +1,7 @@
 # 地图界面精简
 
+> 初代微信小程序历史文档。当前 App 开发请看 [仓库首页](../README.md)。
+
 日期：2026-10-26。关联 [Issue #2](https://github.com/Vans66660/liuda/issues/2)。
 
 ## 常驻界面
