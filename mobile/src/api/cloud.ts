@@ -1,24 +1,21 @@
-import { CLOUDBASE_ENV_ID, CLOUDBASE_PUBLISHABLE_KEY } from './config';
+import { devApiUrl } from '../location/api';
 
 /**
- * ── 纯 HTTP 实现（Publishable Key 鉴权）──
+ * ── 经开发服务器代理的 CloudBase HTTP 实现 ──
  *
- * @cloudbase/js-sdk v3 是浏览器/小程序 SDK，内部访问 localStorage/window，
- * 在 React Native（Expo Go）下会报 "property 'localStorage' doesn't exist"。
- * 匿名登录 HTTP 接口在免费体验版上又返回 LOGIN_TYPE_DISABLED（即使控制台已开启）。
+ * 背景：
+ * - @cloudbase/js-sdk v3 依赖 localStorage/window，RN(Expo Go) 下直接报错。
+ * - 匿名登录接口在免费环境返回 LOGIN_TYPE_DISABLED，改用 Publishable Key 鉴权。
+ * - CloudBase v3 数据库路径含 `(default)` 括号：Node/浏览器 fetch 正常，但 RN
+ *   原生 fetch 会错误编码（真机报 invalid body json），直连云端读不到数据。
  *
- * 因此直接用 fetch 调 CloudBase v3 HTTP API，用 Publishable Key 鉴权：
- *   - Publishable Key 是公开凭证（匿名角色），可安全放前端，无需登录
- *   - 鉴权：Authorization: Bearer <publishable_key>
- *   - host: https://{env}.api.tcloudbasegateway.com/v1
- *   - 集合路径: /database/instances/(default)/databases/(default)/collections/{name}/documents
- * 以上 host/路径/请求格式均按 @cloudbase/js-sdk v3 源码逐一实测验证过。
+ * 最终方案：手机把相对 path + body 发给本项目的 API Route `/api/cloud-db`，
+ * 由 Node（Metro 运行时）用裸括号 URL 请求云端（该环境已实测 100% 可用），
+ * 再把云端响应原样透传回来。地图等功能本就用同样的 devApiUrl 代理模式。
+ *
+ * 代价：手机需能连到开发服务器（Expo Go + tunnel 已满足），电脑需保持在线。
+ * 这和本项目其他 API Routes 的约束一致。
  */
-
-// 括号用 URL 编码（%28/%29）：Node 的 fetch 容忍裸括号，但 RN 原生 fetch
-// （iOS NSURLSession / Android OkHttp）对 URL 里的裸括号处理不一致，可能导致
-// 请求路径不匹配、返回空。编码后两种环境服务端都能正确解析（已实测）。
-const API_BASE = `https://${CLOUDBASE_ENV_ID}.api.tcloudbasegateway.com/v1/database/instances/%28default%29/databases/%28default%29/collections`;
 
 // ── 类型 ──
 
@@ -42,47 +39,49 @@ export type Collection = {
 
 // ── HTTP 请求封装 ──
 
-function uuid(): string {
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
-    const r = Math.floor(Math.random() * 16);
-    const v = c === 'x' ? r : (r & 0x3) | 0x8;
-    return v.toString(16);
-  });
-}
-
 /** 最后一次请求的诊断信息（真机排障用）。 */
 export const cloudDebug: { url: string; status: number; raw: string; error: string } = {
   url: '', status: 0, raw: '', error: '',
 };
 
-/** 所有请求共用 Publishable Key 作为 Bearer token，无需登录/刷新。 */
+/**
+ * 经 /api/cloud-db 代理执行云端请求。
+ * path 是相对集合路径，例如 `/invite_codes/documents?offset=0&limit=100`。
+ */
 async function apiFetch(path: string, init: RequestInit = {}): Promise<any> {
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${CLOUDBASE_PUBLISHABLE_KEY}`,
-    'Content-Type': 'application/json; charset=utf-8',
-    'X-Request-Id': uuid(),
-    ...((init.headers as Record<string, string>) || {}),
-  };
-  const url = `${API_BASE}${path}`;
-  cloudDebug.url = url;
+  const method = (init.method as string) || 'GET';
+  const proxyPath = '/api/cloud-db';
+  const url = devApiUrl(proxyPath) ?? proxyPath; // web 用相对路径；原生用开发服务器绝对地址
+  cloudDebug.url = url + ' → ' + path;
   cloudDebug.error = '';
+
   let resp: Response;
   let text = '';
   try {
-    resp = await fetch(url, { ...init, headers });
+    resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        path,
+        method,
+        body: init.body !== undefined ? JSON.parse(String(init.body)) : undefined,
+      }),
+    });
     cloudDebug.status = resp.status;
     text = await resp.text();
     cloudDebug.raw = text.slice(0, 500);
   } catch (e) {
     cloudDebug.error = e instanceof Error ? e.message : String(e);
-    throw new Error(`网络请求失败: ${cloudDebug.error}`);
+    throw new Error(`连接开发服务器失败: ${cloudDebug.error}`);
   }
+
   let body: any;
   try { body = text ? JSON.parse(text) : {}; } catch { body = { message: text }; }
 
-  if (!resp.ok || body?.code || body?.Error) {
-    const code = body?.code ?? body?.Error?.Code ?? resp.status;
-    const message = body?.message ?? body?.Error?.Message ?? text ?? '云端请求失败';
+  if (!resp.ok || body?.code || body?.Error || body?.error || body?.Response?.Error) {
+    const code = body?.code ?? body?.Error?.Code ?? body?.Response?.Error?.Code ?? body?.error ?? resp.status;
+    const message = body?.message ?? body?.Error?.Message ?? body?.Response?.Error?.Message
+      ?? (typeof body?.error === 'string' ? body.error : body?.detail) ?? text ?? '云端请求失败';
     throw new Error(`[${code}] ${message}`);
   }
   return body;
