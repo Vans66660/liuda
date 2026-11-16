@@ -2,6 +2,8 @@
 
 留答是一款以地点为交流载体的手机 App。上滑发现附近的留话，走近后解锁更多内容。在现场参与过的对话，离开后也能继续。
 
+<img src="docs/app-preview.jpg" alt="留答 App 发现页原型" width="320">
+
 ## 当前 App 原型
 
 - **发现** · 地点卡片、收藏和当前地点名称。
@@ -13,10 +15,10 @@
 
 ## 快速启动
 
-App 源码位于 `feature/app-profile` 分支的 `mobile/` 目录。获得仓库访问权限并安装 Git 和 Node.js 24 后运行：
+App 源码位于默认分支 `main` 的 `mobile/` 目录。获得仓库访问权限并安装 Git 和 Node.js 24 后运行：
 
 ```sh
-git clone --branch feature/app-profile https://github.com/Vans66660/liuda.git
+git clone https://github.com/Vans66660/liuda.git
 cd liuda/mobile
 npm ci
 npx expo start --go
