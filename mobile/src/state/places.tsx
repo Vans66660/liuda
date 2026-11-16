@@ -132,30 +132,41 @@ export function PlacesProvider({ children }: { children: React.ReactNode }) {
         if (active) setDataReady(true);
       }
 
-      // 2) 云端共享留话；失败只提示，绝不假装已同步
-      try {
-        const remote = await fetchCloudPlaces();
-        if (!active) return;
-        cloudReady.current = true;
-        if (remote.length === 0) {
-          // 首次接入：把本机演示内容作为第一批共享数据写入云端
-          const seeds = stateRef.current.places;
-          void Promise.all(seeds.map(place => putCloudPlace(place))).catch(error => {
-            if (active) setNotice('初始化云端数据失败：' + cloudErrorMessage(error));
-          });
-          return;
+      // 2) 云端共享留话；失败自动重试几次，成功则清掉失败提示。
+      //    不设一次性门控：即使启动时拉取失败，之后用户发帖仍会尝试上云。
+      const syncCloud = async (attempt: number): Promise<void> => {
+        try {
+          const remote = await fetchCloudPlaces();
+          if (!active) return;
+          cloudReady.current = true;
+          if (attempt > 0) setNotice('');
+          if (remote.length === 0) {
+            // 首次接入：把本机演示内容作为第一批共享数据写入云端
+            const seeds = stateRef.current.places;
+            void Promise.all(seeds.map(place => putCloudPlace(place))).catch(error => {
+              if (active) setNotice('初始化云端数据失败：' + cloudErrorMessage(error));
+            });
+            return;
+          }
+          const remoteIds = new Set(remote.map(place => place.id));
+          const localOnly = stateRef.current.places.filter(
+            place => place.id.startsWith('local-') && !remoteIds.has(place.id),
+          );
+          setState(current => ({
+            ...current,
+            places: [...remote.filter(place => !current.removed.includes(place.id)), ...localOnly],
+          }));
+        } catch (error) {
+          if (!active) return;
+          if (attempt < 3) {
+            // 指数退避重试：3s / 9s / 27s，覆盖启动时 tunnel 未稳或网络抖动
+            setTimeout(() => { void syncCloud(attempt + 1); }, 3000 * (3 ** attempt));
+            return;
+          }
+          setNotice('云端同步暂不可用，改动先留在本机：' + cloudErrorMessage(error));
         }
-        const remoteIds = new Set(remote.map(place => place.id));
-        const localOnly = stateRef.current.places.filter(
-          place => place.id.startsWith('local-') && !remoteIds.has(place.id),
-        );
-        setState(current => ({
-          ...current,
-          places: [...remote.filter(place => !current.removed.includes(place.id)), ...localOnly],
-        }));
-      } catch (error) {
-        if (active) setNotice('云端同步暂不可用，改动先留在本机：' + cloudErrorMessage(error));
-      }
+      };
+      void syncCloud(0);
     })();
     return () => { active = false; };
   }, []);
@@ -167,9 +178,10 @@ export function PlacesProvider({ children }: { children: React.ReactNode }) {
       setNotice('本机保存失败，关闭后这次修改可能丢失。');
     });
 
-    // 只把用户操作产生的变更推上云，避免把刚拉回的数据又写回去
+    // 只把用户操作产生的变更推上云，避免把刚拉回的数据又写回去。
+    // 不依赖初始拉取是否成功：用户主动发帖/接话/点赞时始终尝试上云，失败再提示。
     const ids = pending.current.splice(0);
-    if (!cloudReady.current || ids.length === 0) return;
+    if (ids.length === 0) return;
     ids.forEach(id => {
       const place = state.places.find(item => item.id === id);
       if (!place) return;

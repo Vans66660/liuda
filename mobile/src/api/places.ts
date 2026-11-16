@@ -15,6 +15,23 @@ function toDoc(place: Place): Record<string, unknown> {
   return doc;
 }
 
+/**
+ * 解包 EJSON 扩展数字。
+ * 早期经 @cloudbase/js-sdk 写入的文档，数字是 {"$numberInt":"80"} 这类扩展格式；
+ * 现在经纯 HTTP API 写入的是普通数字。两种都要能读。
+ */
+function unwrapNumber(value: unknown): number {
+  if (typeof value === 'number') return value;
+  if (value && typeof value === 'object') {
+    const box = value as Record<string, unknown>;
+    if (typeof box.$numberInt === 'string' && Number.isFinite(Number(box.$numberInt))) return Number(box.$numberInt);
+    if (typeof box.$numberDouble === 'string' && Number.isFinite(Number(box.$numberDouble))) return Number(box.$numberDouble);
+    if (typeof box.$numberLong === 'string' && Number.isFinite(Number(box.$numberLong))) return Number(box.$numberLong);
+    if (typeof box.$numberDecimal === 'string' && Number.isFinite(Number(box.$numberDecimal))) return Number(box.$numberDecimal);
+  }
+  return NaN;
+}
+
 /** 云端脏数据不能污染 UI：这里做一次最小结构校验。 */
 function fromDoc(doc: Doc): Place | null {
   const id = typeof doc._id === 'string'
@@ -36,8 +53,8 @@ function fromDoc(doc: Doc): Place | null {
     text: doc.text,
     mood,
     replies,
-    distance: Number.isFinite(doc.distance) ? Number(doc.distance) : 0,
-    likes: Number.isFinite(doc.likes) ? Number(doc.likes) : 0,
+    distance: Number.isFinite(unwrapNumber(doc.distance)) ? unwrapNumber(doc.distance) : 0,
+    likes: Number.isFinite(unwrapNumber(doc.likes)) ? unwrapNumber(doc.likes) : 0,
     liked: doc.liked === true,
     participated: doc.participated === true,
     owned: doc.owned === true,
@@ -47,13 +64,22 @@ function fromDoc(doc: Doc): Place | null {
     place.customLocationId = doc.customLocationId;
   }
   if (doc.point && typeof doc.point === 'object') {
-    place.point = doc.point as unknown as Place['point'];
+    const point = doc.point as Record<string, unknown>;
+    place.point = {
+      latitude: unwrapNumber(point.latitude),
+      longitude: unwrapNumber(point.longitude),
+    };
   }
   if (doc.media && typeof doc.media === 'object') {
     place.media = doc.media as unknown as Place['media'];
   }
   if (doc.task && typeof doc.task === 'object') {
-    place.task = doc.task as unknown as Place['task'];
+    const task = doc.task as Record<string, unknown>;
+    place.task = {
+      title: typeof task.title === 'string' ? task.title : '',
+      reward: Number.isFinite(unwrapNumber(task.reward)) ? unwrapNumber(task.reward) : 0,
+      requirement: typeof task.requirement === 'string' ? task.requirement : '',
+    };
   }
   return place;
 }
