@@ -1,9 +1,10 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { Dimensions, Keyboard, Platform, ScrollView, TextInput } from 'react-native';
+import type { ReactNode } from 'react';
+import { Dimensions, Keyboard, Platform, ScrollView, TextInput, View } from 'react-native';
 import type {
   KeyboardEvent, LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent,
   ScrollViewInstance, ScrollViewProps, TextInputBlurEvent, TextInputFocusEvent,
-  TextInputInstance, TextInputProps,
+  TextInputInstance, TextInputProps, ViewProps,
 } from 'react-native';
 
 // 键盘弹出时，把当前聚焦输入框的下沿滚动到键盘顶部上方 GAP 处。
@@ -152,4 +153,91 @@ export function AlignedTextInput({ onFocus, onBlur, onLayout, ...props }: TextIn
     ref={setNode}
     onFocus={handleFocus} onBlur={handleBlur} onLayout={handleLayout}
   />;
+}
+
+/**
+ * 底部弹出面板（Modal sheet）版本的键盘对齐容器。
+ * sheet 内部没有可滚动区域，所以不靠 scrollTo，而是整体抬升面板：
+ * 用 measureInWindow 读取聚焦输入框下沿，抬升到键盘上沿上方 GAP 处。
+ * 与 KeyboardAlignedScrollView 共用 AlignContext / AlignedTextInput，保证全项目对齐语义一致。
+ */
+export function KeyboardAlignedSheet({ children, style, ...rest }: ViewProps & { children: ReactNode }) {
+  const focused = useRef<TextInputInstance | null>(null);
+  const keyboardTop = useRef<number | null>(null);
+  const lift = useRef(0);
+  const [liftValue, setLiftValue] = useState(0);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const applyLift = useCallback((next: number) => {
+    const value = Math.max(0, next);
+    if (Math.abs(value - lift.current) < 1) return;
+    lift.current = value;
+    setLiftValue(value);
+  }, []);
+
+  const align = useCallback(() => {
+    const node = focused.current;
+    if (!node || keyboardTop.current == null) return;
+    node.measureInWindow((_x, y, _width, height) => {
+      const top = keyboardTop.current;
+      if (top == null || !Number.isFinite(y) || !Number.isFinite(height)) return;
+      // 面板已被 transform 抬升 lift，测量值是视觉位置；加回 lift 才是未抬升时的下沿。
+      const bottom = y + height + lift.current;
+      applyLift(bottom + GAP - top);
+    });
+  }, [applyLift]);
+
+  const scheduleAlign = useCallback((delay = 60) => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(() => { timer.current = null; align(); }, delay);
+  }, [align]);
+
+  const updateKeyboard = useCallback((event: KeyboardEvent) => {
+    const { endCoordinates } = event;
+    if (!Number.isFinite(endCoordinates.height) || endCoordinates.height <= 0) return;
+    const top = Number.isFinite(endCoordinates.screenY)
+      ? endCoordinates.screenY
+      : Dimensions.get('window').height - endCoordinates.height;
+    keyboardTop.current = top;
+    scheduleAlign();
+  }, [scheduleAlign]);
+
+  useEffect(() => {
+    const show = Keyboard.addListener('keyboardDidShow', updateKeyboard);
+    // iOS 切换输入法 / 候选栏、外接键盘时高度会变，需要重新贴合；Android 仅在 didShow 重发。
+    const frame = Platform.OS === 'ios' ? Keyboard.addListener('keyboardDidChangeFrame', updateKeyboard) : null;
+    const hide = Keyboard.addListener('keyboardDidHide', () => {
+      keyboardTop.current = null;
+      focused.current = null;
+      if (timer.current) { clearTimeout(timer.current); timer.current = null; }
+      applyLift(0);
+    });
+    return () => {
+      show.remove(); frame?.remove(); hide.remove();
+      if (timer.current) clearTimeout(timer.current);
+    };
+  }, [updateKeyboard, applyLift]);
+
+  const api = useMemo<AlignApi>(() => ({
+    focus: node => {
+      focused.current = node;
+      if (keyboardTop.current != null) scheduleAlign(50);
+    },
+    blur: node => {
+      if (focused.current !== node) return;
+      setTimeout(() => { if (focused.current === node) focused.current = null; }, 0);
+    },
+    relayout: node => {
+      if (focused.current === node && keyboardTop.current != null) scheduleAlign(80);
+    },
+  }), [scheduleAlign]);
+
+  return <AlignContext.Provider value={api}>
+    <View
+      {...rest}
+      style={[style, liftValue > 0 ? { transform: [{ translateY: -liftValue }] } : null]}
+    >
+      {children}
+    </View>
+  </AlignContext.Provider>;
 }
