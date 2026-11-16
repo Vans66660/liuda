@@ -1,4 +1,4 @@
-import { cloudErrorMessage, collection, ensureSignedIn } from './cloud';
+import { cloudDebug, cloudErrorMessage, collection, ensureSignedIn } from './cloud';
 import { INVITE_COLLECTION } from './config';
 
 export type InviteResult = { ok: boolean; message: string };
@@ -25,10 +25,12 @@ export async function verifyInviteCode(raw: string): Promise<InviteResult> {
       && row.active === true,
     );
     if (!hit) {
+      // 真机排障：把最后一次请求的原始状态/响应拼进提示，一次定位问题。
+      const dbg = `【诊断 status=${cloudDebug.status} raw=${cloudDebug.raw || cloudDebug.error || '(空)'} }`;
       return {
         ok: false,
         message: rows.length === 0
-          ? '云端未读到邀请码，请检查网络后重试'
+          ? `云端未读到邀请码 ${dbg}`
           : '邀请码无效或已停用',
       };
     }

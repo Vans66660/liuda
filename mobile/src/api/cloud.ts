@@ -15,7 +15,10 @@ import { CLOUDBASE_ENV_ID, CLOUDBASE_PUBLISHABLE_KEY } from './config';
  * 以上 host/路径/请求格式均按 @cloudbase/js-sdk v3 源码逐一实测验证过。
  */
 
-const API_BASE = `https://${CLOUDBASE_ENV_ID}.api.tcloudbasegateway.com/v1/database/instances/(default)/databases/(default)/collections`;
+// 括号用 URL 编码（%28/%29）：Node 的 fetch 容忍裸括号，但 RN 原生 fetch
+// （iOS NSURLSession / Android OkHttp）对 URL 里的裸括号处理不一致，可能导致
+// 请求路径不匹配、返回空。编码后两种环境服务端都能正确解析（已实测）。
+const API_BASE = `https://${CLOUDBASE_ENV_ID}.api.tcloudbasegateway.com/v1/database/instances/%28default%29/databases/%28default%29/collections`;
 
 // ── 类型 ──
 
@@ -47,6 +50,11 @@ function uuid(): string {
   });
 }
 
+/** 最后一次请求的诊断信息（真机排障用）。 */
+export const cloudDebug: { url: string; status: number; raw: string; error: string } = {
+  url: '', status: 0, raw: '', error: '',
+};
+
 /** 所有请求共用 Publishable Key 作为 Bearer token，无需登录/刷新。 */
 async function apiFetch(path: string, init: RequestInit = {}): Promise<any> {
   const headers: Record<string, string> = {
@@ -55,8 +63,20 @@ async function apiFetch(path: string, init: RequestInit = {}): Promise<any> {
     'X-Request-Id': uuid(),
     ...((init.headers as Record<string, string>) || {}),
   };
-  const resp = await fetch(`${API_BASE}${path}`, { ...init, headers });
-  const text = await resp.text();
+  const url = `${API_BASE}${path}`;
+  cloudDebug.url = url;
+  cloudDebug.error = '';
+  let resp: Response;
+  let text = '';
+  try {
+    resp = await fetch(url, { ...init, headers });
+    cloudDebug.status = resp.status;
+    text = await resp.text();
+    cloudDebug.raw = text.slice(0, 500);
+  } catch (e) {
+    cloudDebug.error = e instanceof Error ? e.message : String(e);
+    throw new Error(`网络请求失败: ${cloudDebug.error}`);
+  }
   let body: any;
   try { body = text ? JSON.parse(text) : {}; } catch { body = { message: text }; }
 
