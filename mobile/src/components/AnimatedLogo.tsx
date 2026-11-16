@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { AccessibilityInfo, Animated, AppState, Easing, Image, Pressable, StyleSheet } from 'react-native';
-import Svg, { Circle, Defs, RadialGradient, Stop } from 'react-native-svg';
+import Svg, { Circle, Defs, Ellipse, Path, RadialGradient, Stop } from 'react-native-svg';
 import { LinearGradient } from 'expo-linear-gradient';
 
 const logo = require('../../assets/liuda-comma-transparent.png');
@@ -13,6 +13,7 @@ const eyes = [
 
 export function AnimatedLogo({ size, active, blinkOnStart = false }: { size: number; active: boolean; blinkOnStart?: boolean }) {
   const glowId = useId().replace(/:/g, '');
+  const [imageReady, setImageReady] = useState(false);
   const [float] = useState(() => new Animated.Value(0));
   const [blink] = useState(() => new Animated.Value(0));
   const blinkAnimation = useRef<Animated.CompositeAnimation | null>(null);
@@ -104,8 +105,20 @@ export function AnimatedLogo({ size, active, blinkOnStart = false }: { size: num
           <Circle cx="82" cy="78" r="72" fill={`url(#${glowId})`} />
         </Svg>
       </Animated.View>
-      <Image accessible={false} source={logo} style={{ width: size, height: size }} />
-      {eyes.map(eye => {
+      {!imageReady && <Svg width={size} height={size} viewBox="0 0 1254 1254" style={StyleSheet.absoluteFill}>
+        <Path fill="#f1f0ee" d="M329 532 C329 350 481 218 662 218 C845 218 974 347 974 545 C974 817 739 1047 521 1047 C438 1047 370 1009 370 957 C370 926 398 908 435 903 C523 892 579 864 600 825 C614 799 586 793 554 787 C423 762 329 676 329 532 Z" />
+        <Ellipse cx={606} cy={605} rx={31} ry={51} fill="#151515" rotation={-21} originX={606} originY={605} />
+        <Ellipse cx={795} cy={555} rx={33} ry={56} fill="#151515" rotation={-21} originX={795} originY={555} />
+      </Svg>}
+      <Image
+        accessible={false}
+        source={logo}
+        fadeDuration={0}
+        onLoad={() => setImageReady(true)}
+        onError={() => setImageReady(false)}
+        style={{ width: size, height: size, opacity: imageReady ? 1 : 0 }}
+      />
+      {imageReady && eyes.map(eye => {
         const pad = 10;
         const left = (eye.x - pad) * scale;
         const top = (eye.y - pad) * scale;

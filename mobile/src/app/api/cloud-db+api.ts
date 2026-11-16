@@ -64,7 +64,7 @@ export async function POST(request: Request) {
     let response: Response | null = null;
     for (let attempt = 0; attempt < 2; attempt += 1) {
       try {
-        response = await fetch(`${DB_BASE}${payload.path}`, init);
+        response = await fetch(`${DB_BASE}${payload.path}`, { ...init, signal: AbortSignal.timeout(8000) });
         if (response.status < 500) break;
       } catch {
         if (attempt === 1) throw new Error('network');
@@ -74,7 +74,7 @@ export async function POST(request: Request) {
     if (!response) throw new Error('network');
     const text = await response.text();
     // 原样把云端响应透传回手机：状态码 + 正文。
-    return new Response(text, {
+    return new Response(response.status === 204 ? null : text, {
       status: response.status,
       headers: { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' },
     });

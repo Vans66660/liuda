@@ -1,3 +1,4 @@
+import { AppState } from 'react-native';
 import { File } from 'expo-file-system';
 import { placeMediaUri, type PlaceMedia } from '../components/LeaveMedia';
 import { atPoint, isPoint, type Fix, type Point } from '../location/geo';
@@ -112,44 +113,78 @@ export function PlacesProvider({ children }: { children: React.ReactNode }) {
   const ready = authorId !== null && loadedFor === authorId;
   const writeQueue = useRef(Promise.resolve());
   const pending = useRef<string[]>([]);
-  const cloudReady = useRef(false);
+  const uploading = useRef(new Set<string>());
   const stateRef = useRef(state);
   const refreshBusy = useRef(false);
 
   // ref 只在 effect 里更新，避免在渲染期间读写 ref（react-hooks/refs）
   useEffect(() => { stateRef.current = state; }, [state]);
 
-  // 拉云端共享留话并合并到本地。返回 null 表示成功，否则返回错误文案。
-  const syncCloud = useCallback(async (): Promise<string | null> => {
-    try {
-      const remote = await fetchCloudPlaces();
-      cloudReady.current = true;
-      if (remote.length === 0) {
-        // 首次接入：把本机演示内容作为第一批共享数据写入云端
-        const seeds = stateRef.current.places;
-        void Promise.all(seeds.map(place => putCloudPlace(place))).catch(error => {
-          setNotice('初始化云端数据失败：' + cloudErrorMessage(error));
-        });
-        return null;
+  const uploadPending = useCallback(async (snapshot: State): Promise<void> => {
+    const queue = pending.current;
+    const ids = [...new Set(queue.splice(0))];
+    for (const id of ids) uploading.current.add(id);
+    for (const id of ids) {
+      try {
+        const place = snapshot.places.find(item => item.id === id);
+        if (place && !stateRef.current.removed.includes(id)) await putCloudPlace(place);
+      } catch (error) {
+        queue.push(id);
+        if (pending.current === queue) setNotice('云端保存失败，将自动重试：' + cloudErrorMessage(error));
+      } finally {
+        uploading.current.delete(id);
       }
-      const remoteIds = new Set(remote.map(place => place.id));
-      const localOnly = stateRef.current.places.filter(
-        place => place.id.startsWith('local-') && !remoteIds.has(place.id),
-      );
-      setState(current => ({
-        ...current,
-        places: [...remote.filter(place => !current.removed.includes(place.id)), ...localOnly],
-      }));
-      return null;
-    } catch (error) {
-      return cloudErrorMessage(error);
     }
-  }, []);
+    if (ids.length && pending.current === queue && !queue.length) void touch();
+  }, [touch]);
+
+  const syncCloud = useCallback(async (active: () => boolean): Promise<void> => {
+    if (refreshBusy.current || uploading.current.size) return;
+    refreshBusy.current = true;
+    try {
+      await uploadPending(stateRef.current);
+      if (!active()) return;
+      const remote = await fetchCloudPlaces();
+      if (!active()) return;
+      setState(current => {
+        const unsynced = new Set([...pending.current, ...uploading.current]);
+        const local = current.places.filter(place => unsynced.has(place.id));
+        return {
+          ...current,
+          places: [...local, ...remote.filter(place => !unsynced.has(place.id) && !current.removed.includes(place.id))],
+        };
+      });
+      if (!pending.current.length) setNotice('');
+    } catch (error) {
+      if (active()) setNotice('云端同步暂不可用：' + cloudErrorMessage(error));
+    } finally {
+      refreshBusy.current = false;
+    }
+  }, [uploadPending]);
+
+  const activeAccount = useRef<string | null>(null);
+  useEffect(() => {
+    activeAccount.current = ready ? authorId : null;
+    if (!ready || !authorId) return;
+    const active = () => activeAccount.current === authorId;
+    const refreshForeground = () => {
+      if (AppState.currentState === 'active') void syncCloud(active);
+    };
+    void syncCloud(active);
+    const timer = setInterval(refreshForeground, 5000);
+    const subscription = AppState.addEventListener('change', refreshForeground);
+    return () => {
+      activeAccount.current = null;
+      clearInterval(timer);
+      subscription.remove();
+    };
+  }, [authorId, ready, syncCloud]);
 
   // authorId 变化（含首次登录、切换邀请码）时：加载对应账号缓存 → 拉云端
   useEffect(() => {
     let active = true;
     const storageKey = cacheKey(authorId);
+    pending.current = [];
 
     (async () => {
       // 1) 本机缓存先渲染（按账号隔离）
@@ -157,13 +192,19 @@ export function PlacesProvider({ children }: { children: React.ReactNode }) {
       try {
         const raw = await AsyncStorage.getItem(storageKey);
         if (raw) {
-          const stored = JSON.parse(raw) as State;
+          const stored = JSON.parse(raw) as State & { pendingUploads?: string[] };
           const removed = Array.isArray(stored.removed) ? stored.removed : [];
-          if (!Array.isArray(stored.places) || !stored.places.length || !stored.places.every(validPlace)
+          if (!Array.isArray(stored.places) || !stored.places.every(validPlace)
             || !Array.isArray(stored.arrived) || !stored.arrived.every(id => typeof id === 'string')
             || !Array.isArray(stored.saved) || !stored.saved.every(id => typeof id === 'string')
             || !removed.every(id => typeof id === 'string')) throw new Error('invalid cache');
-          if (active) setState({ ...stored, removed });
+          if (active) {
+            const { pendingUploads, ...cached } = stored;
+            pending.current = Array.isArray(pendingUploads)
+              ? pendingUploads.filter(id => typeof id === 'string')
+              : [];
+            setState({ ...cached, removed });
+          }
           loaded = true;
         }
       } catch {
@@ -172,68 +213,32 @@ export function PlacesProvider({ children }: { children: React.ReactNode }) {
       if (active && !loaded) {
         // 该账号无本地缓存：重置为初始演示内容（游客或首次登录的干净起点）
         setState({ places: initialPlaces, arrived: [], saved: [], removed: [] });
-        pending.current = [];
       }
       // 缓存就绪
       if (active) setLoadedFor(authorId);
 
-      // 2) 云端共享留话；失败自动重试（3s/9s/27s），成功清提示
-      const attempt = async (n: number): Promise<void> => {
-        const errorText = await syncCloud();
-        if (errorText === null) {
-          if (active) setNotice('');
-          return;
-        }
-        if (!active) return;
-        if (n < 3) {
-          setTimeout(() => { void attempt(n + 1); }, 3000 * (3 ** n));
-        } else {
-          setNotice('云端同步暂不可用，改动先留在本机：' + errorText);
-        }
-      };
-      void attempt(0);
     })();
     return () => { active = false; };
-  }, [authorId, syncCloud]);
+  }, [authorId]);
 
-  /** 手动下拉刷新：重拉云端。 */
   const refresh = useCallback(async (): Promise<void> => {
-    if (refreshBusy.current) return;
-    refreshBusy.current = true;
-    // 刷新即活跃信号，顺带续期邀请码占用
+    if (!ready || !authorId) return;
     void touch();
-    const errorText = await syncCloud();
-    refreshBusy.current = false;
-    if (errorText === null) {
-      setNotice('');
-    } else {
-      setNotice('云端同步暂不可用，改动先留在本机：' + errorText);
-    }
-  }, [syncCloud, touch]);
+    await syncCloud(() => activeAccount.current === authorId);
+  }, [authorId, ready, syncCloud, touch]);
 
   useEffect(() => {
     if (!ready || !authorId) return;
     const storageKey = cacheKey(authorId);
-    const serialized = JSON.stringify(state);
+    const serialized = JSON.stringify({ ...state, pendingUploads: [...new Set([...pending.current, ...uploading.current])] });
     writeQueue.current = writeQueue.current.then(() => AsyncStorage.setItem(storageKey, serialized)).catch(() => {
       setNotice('本机保存失败，关闭后这次修改可能丢失。');
     });
 
-    // 只把用户操作产生的变更推上云，避免把刚拉回的数据又写回去。
-    // 不依赖初始拉取是否成功：用户主动发帖/接话/点赞时始终尝试上云，失败再提示。
-    const ids = pending.current.splice(0);
-    if (ids.length === 0) return;
-    ids.forEach(id => {
-      const place = state.places.find(item => item.id === id);
-      if (!place) return;
-      void putCloudPlace(place).then(() => {
-        // 发帖/接话/点赞成功即续期占用
-        void touch();
-      }).catch(error => {
-        setNotice('云端保存失败，改动已留在本机：' + cloudErrorMessage(error));
-      });
-    });
-  }, [state, ready, authorId, touch]);
+    if (pending.current.length && !refreshBusy.current && !uploading.current.size) {
+      void syncCloud(() => activeAccount.current === authorId);
+    }
+  }, [state, ready, authorId, syncCloud]);
 
   function arrive(id: string) {
     setState(current => ({ ...current, arrived: [...new Set([...current.arrived, id])] }));
@@ -271,6 +276,10 @@ export function PlacesProvider({ children }: { children: React.ReactNode }) {
   async function removePlace(id: string): Promise<boolean> {
     const place = stateRef.current.places.find(item => item.id === id);
     if (!place || !isMyPlace(place, authorId)) return false;
+    if (uploading.current.has(id)) {
+      setNotice('这条留话正在同步，请稍后再删除。');
+      return false;
+    }
     const mediaUri = place.media ? placeMediaUri(place.media) : null;
     pending.current = pending.current.filter(value => value !== id);
     setState(current => ({
