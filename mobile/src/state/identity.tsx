@@ -2,12 +2,12 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { tryOccupySession, releaseSession, touchSession } from '../api/sessions';
 
-const key = 'liuda-author-v1';
 const deviceKey = 'liuda-device-id-v1';
 
 /**
  * 团队测试版用邀请码当作者身份：同一成员在不同设备上输入同一个码，会得到同一个 authorId，
  * 因此能删自己发的帖和自己的接话。写进共享文档的是派生哈希，不是邀请码明文。
+ * 邀请码派生是确定性的，重新输入同一码得到同一 authorId，从而跨设备恢复同一账号数据。
  */
 function deriveAuthorId(code: string): string {
   const text = 'liuda:' + code.trim().toUpperCase();
@@ -27,20 +27,7 @@ function uuid(): string {
   });
 }
 
-async function loadAuthorId(): Promise<string> {
-  try {
-    const stored = await AsyncStorage.getItem(key);
-    if (stored) return stored;
-  } catch {
-    // 读不到时继续用下面的本机身份兜底。
-  }
-  // 未使用邀请码（先逛逛）也有稳定身份，只能删本机自己发的内容。
-  const guest = 'guest-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
-  try { await AsyncStorage.setItem(key, guest); } catch { /* 本机身份不落盘时仍可用到本次会话结束 */ }
-  return guest;
-}
-
-/** 设备 ID：跨账号/跨会话稳定，用于判断邀请码是否被"另一台设备"占用。 */
+/** 设备 ID：跨账号/跨启动稳定，用于判断邀请码是否被「另一台设备」占用。 */
 async function loadDeviceId(): Promise<string> {
   try {
     const stored = await AsyncStorage.getItem(deviceKey);
@@ -54,13 +41,16 @@ async function loadDeviceId(): Promise<string> {
 export type SignInResult = { ok: boolean; message: string };
 
 type IdentityValue = {
+  /** null 表示未登录。不持久化、不自动恢复：每次启动都要求重新登录。 */
   authorId: string | null;
-  /** 当前是否用邀请码身份（false 表示游客/未登录）。 */
+  /** 当前是否用邀请码身份。 */
   isInvite: boolean;
   signInWithInvite: (code: string) => Promise<SignInResult>;
+  /** 游客（先逛逛）身份：本机临时身份，不持久化。 */
+  signInAsGuest: () => void;
   /** 活跃心跳：刷新邀请码占用时间，失败不阻断。 */
   touch: () => Promise<void>;
-  /** 退出当前身份：释放占用并退回游客身份。 */
+  /** 退出登录：释放占用并回到未登录。 */
   signOut: () => Promise<void>;
 };
 
@@ -68,6 +58,7 @@ const IdentityContext = createContext<IdentityValue>({
   authorId: null,
   isInvite: false,
   signInWithInvite: async () => ({ ok: false, message: '' }),
+  signInAsGuest: () => {},
   touch: async () => {},
   signOut: async () => {},
 });
@@ -77,7 +68,6 @@ export function IdentityProvider({ children }: { children: ReactNode }) {
   const [deviceId, setDeviceId] = useState<string | null>(null);
   useEffect(() => {
     let active = true;
-    void loadAuthorId().then(value => { if (active) setAuthorId(value); });
     void loadDeviceId().then(value => { if (active) setDeviceId(value); });
     return () => { active = false; };
   }, []);
@@ -88,9 +78,13 @@ export function IdentityProvider({ children }: { children: ReactNode }) {
     // 一人一码互斥：被其他设备占用则拒绝登录
     const check = await tryOccupySession(next, device);
     if (!check.ok) return check;
-    try { await AsyncStorage.setItem(key, next); } catch { /* 本次会话仍生效 */ }
     setAuthorId(next);
     return { ok: true, message: '' };
+  }
+
+  function signInAsGuest() {
+    const guest = 'guest-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+    setAuthorId(guest);
   }
 
   async function touch() {
@@ -103,15 +97,11 @@ export function IdentityProvider({ children }: { children: ReactNode }) {
     if (authorId && authorId.startsWith('inv-')) {
       void releaseSession(authorId);
     }
-    // 退回游客身份而不是留空：保持"我的留话"归属判断可用，也避免下次启动重复分配。
-    const guest = 'guest-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
-    try { await AsyncStorage.setItem(key, guest); } catch { /* 本次会话仍生效 */ }
-    setAuthorId(guest);
+    setAuthorId(null);
   }
 
-  // 邀请码派生的 id 前缀是 inv-，游客是 guest-
   const isInvite = typeof authorId === 'string' && authorId.startsWith('inv-');
-  return <IdentityContext.Provider value={{ authorId, isInvite, signInWithInvite, touch, signOut }}>{children}</IdentityContext.Provider>;
+  return <IdentityContext.Provider value={{ authorId, isInvite, signInWithInvite, signInAsGuest, touch, signOut }}>{children}</IdentityContext.Provider>;
 }
 
 export const useIdentity = () => useContext(IdentityContext);

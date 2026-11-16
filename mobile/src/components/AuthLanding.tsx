@@ -14,7 +14,7 @@ type LoginMethod = '手机号' | 'Apple';
 
 export function AuthLanding() {
   const { started, notice } = useEntry();
-  const { signInWithInvite } = useIdentity();
+  const { signInWithInvite, signInAsGuest } = useIdentity();
   const [fontsLoaded] = useFonts({
     LiudaDisplay: require('../../assets/fonts/LiudaDisplay.otf'),
     LiudaInterfaceV2: require('../../assets/fonts/LiudaInterfaceV2.otf'),
@@ -33,9 +33,11 @@ export function AuthLanding() {
   const [inviteBusy, setInviteBusy] = useState(false);
   const [inviteError, setInviteError] = useState('');
 
-  function browse() {
+  // 游客（先逛逛）进入：生成本机临时身份
+  function enterAsGuest() {
     setLoginOpen(false);
     setInviteOpen(false);
+    signInAsGuest();
     router.replace(started ? '/discover' : '/onboarding');
   }
 
@@ -54,7 +56,10 @@ export function AuthLanding() {
       setInviteError(signIn.message);
       return;
     }
-    browse();
+    // 邀请码登录成功：真实登录，直接进入（数据由云端加载）
+    setLoginOpen(false);
+    setInviteOpen(false);
+    router.replace('/discover');
   }
 
   function openInvite() {
@@ -80,7 +85,7 @@ export function AuthLanding() {
         <Pressable accessibilityRole="button" accessibilityLabel="使用团队邀请码" onPress={openInvite} style={({ pressed }) => [s.method, s.inviteButton, pressed && s.pressed]}>
           <Ionicons name="key-outline" size={20} color="#d5e6bb" style={s.methodIcon} /><Text style={[s.inviteButtonText, medium]}>使用团队邀请码</Text>
         </Pressable>
-        <Pressable accessibilityRole="button" onPress={browse} style={({ pressed }) => [s.guest, pressed && s.pressed]}><Text style={[s.guestText, regular]}>先逛逛</Text></Pressable>
+        <Pressable accessibilityRole="button" onPress={enterAsGuest} style={({ pressed }) => [s.guest, pressed && s.pressed]}><Text style={[s.guestText, regular]}>先逛逛</Text></Pressable>
       </View>
       <Pressable accessibilityRole="link" onPress={() => router.push('/about-privacy')} style={s.privacy}><Text style={[s.privacyText, regular]}>隐私说明</Text></Pressable>
       {!!notice && <Text style={[s.notice, regular]}>{notice}</Text>}
@@ -92,7 +97,7 @@ export function AuthLanding() {
         <View accessibilityViewIsModal style={[s.sheet, { paddingBottom: Math.max(insets.bottom, 24) }]}>
           <View style={s.sheetHeader}><Text accessibilityRole="header" style={[s.sheetTitle, medium]}>{method}登录</Text><Pressable accessibilityRole="button" accessibilityLabel="关闭登录说明" hitSlop={12} onPress={() => setLoginOpen(false)}><Ionicons name="close" size={23} color="#a1a1a1" /></Pressable></View>
           <Text style={[s.sheetBody, regular]}>账号服务尚未接入。现在可以先浏览演示内容。</Text>
-          <Pressable accessibilityRole="button" onPress={browse} style={({ pressed }) => [s.method, s.primary, pressed && s.pressed]}><Text style={[s.primaryText, medium]}>先逛逛</Text></Pressable>
+          <Pressable accessibilityRole="button" onPress={enterAsGuest} style={({ pressed }) => [s.method, s.primary, pressed && s.pressed]}><Text style={[s.primaryText, medium]}>先逛逛</Text></Pressable>
         </View>
       </View>
     </Modal>
