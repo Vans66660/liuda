@@ -49,7 +49,11 @@ export function AuthLanding() {
       setInviteError(result.message);
       return;
     }
-    await signInWithInvite(inviteCode);
+    const signIn = await signInWithInvite(inviteCode);
+    if (!signIn.ok) {
+      setInviteError(signIn.message);
+      return;
+    }
     browse();
   }
 

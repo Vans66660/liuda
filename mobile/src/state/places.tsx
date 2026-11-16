@@ -2,7 +2,7 @@ import { File } from 'expo-file-system';
 import { placeMediaUri, type PlaceMedia } from '../components/LeaveMedia';
 import { atPoint, isPoint, type Fix, type Point } from '../location/geo';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import { fetchCloudPlaces, putCloudPlace, removeCloudPlace } from '../api/places';
 import { cloudErrorMessage } from '../api/cloud';
 import { useIdentity } from './identity';
@@ -76,9 +76,15 @@ type Store = State & {
   create: (name: string, location: string, text: string, point?: Point, media?: PlaceMedia, customLocation?: true | string) => string;
   removePlace: (id: string) => Promise<boolean>;
   removeReply: (placeId: string, replyId: string) => boolean;
+  /** 手动下拉刷新：重新拉云端共享留话并合并，返回是否成功。 */
+  refresh: () => Promise<void>;
 };
 const Context = createContext<Store | null>(null);
-const key = 'liuda-mobile-demo-v1';
+
+/** 本地缓存按账号隔离，避免切换邀请码后串数据。 */
+function cacheKey(authorId: string | null): string {
+  return authorId ? `liuda-places-${authorId}` : 'liuda-places-guest';
+}
 
 function validPlace(value: unknown): value is Place {
   if (!value || typeof value !== 'object') return false;
@@ -98,25 +104,58 @@ function validPlace(value: unknown): value is Place {
 }
 
 export function PlacesProvider({ children }: { children: React.ReactNode }) {
-  const { authorId } = useIdentity();
+  const { authorId, touch } = useIdentity();
   const [state, setState] = useState<State>({ places: initialPlaces, arrived: [], saved: [], removed: [] });
-  const [dataReady, setDataReady] = useState(false);
+  const [loadedFor, setLoadedFor] = useState<string | null>(null);
   const [notice, setNotice] = useState('');
-  const ready = dataReady && authorId !== null;
+  // ready 由「缓存已为哪个账号加载」派生：切换账号时自动变 false，无需在 effect 里同步 setState
+  const ready = authorId !== null && loadedFor === authorId;
   const writeQueue = useRef(Promise.resolve());
   const pending = useRef<string[]>([]);
   const cloudReady = useRef(false);
   const stateRef = useRef(state);
+  const refreshBusy = useRef(false);
 
   // ref 只在 effect 里更新，避免在渲染期间读写 ref（react-hooks/refs）
   useEffect(() => { stateRef.current = state; }, [state]);
 
+  // 拉云端共享留话并合并到本地。返回 null 表示成功，否则返回错误文案。
+  const syncCloud = useCallback(async (): Promise<string | null> => {
+    try {
+      const remote = await fetchCloudPlaces();
+      cloudReady.current = true;
+      if (remote.length === 0) {
+        // 首次接入：把本机演示内容作为第一批共享数据写入云端
+        const seeds = stateRef.current.places;
+        void Promise.all(seeds.map(place => putCloudPlace(place))).catch(error => {
+          setNotice('初始化云端数据失败：' + cloudErrorMessage(error));
+        });
+        return null;
+      }
+      const remoteIds = new Set(remote.map(place => place.id));
+      const localOnly = stateRef.current.places.filter(
+        place => place.id.startsWith('local-') && !remoteIds.has(place.id),
+      );
+      setState(current => ({
+        ...current,
+        places: [...remote.filter(place => !current.removed.includes(place.id)), ...localOnly],
+      }));
+      return null;
+    } catch (error) {
+      return cloudErrorMessage(error);
+    }
+  }, []);
+
+  // authorId 变化（含首次登录、切换邀请码）时：加载对应账号缓存 → 拉云端
   useEffect(() => {
     let active = true;
+    const storageKey = cacheKey(authorId);
+
     (async () => {
-      // 1) 本机缓存先渲染：弱网/离线时 App 仍可用
+      // 1) 本机缓存先渲染（按账号隔离）
+      let loaded = false;
       try {
-        const raw = await AsyncStorage.getItem(key);
+        const raw = await AsyncStorage.getItem(storageKey);
         if (raw) {
           const stored = JSON.parse(raw) as State;
           const removed = Array.isArray(stored.removed) ? stored.removed : [];
@@ -125,56 +164,58 @@ export function PlacesProvider({ children }: { children: React.ReactNode }) {
             || !Array.isArray(stored.saved) || !stored.saved.every(id => typeof id === 'string')
             || !removed.every(id => typeof id === 'string')) throw new Error('invalid cache');
           if (active) setState({ ...stored, removed });
+          loaded = true;
         }
       } catch {
         if (active) setNotice('本机记录读取失败，当前展示初始演示内容。');
-      } finally {
-        if (active) setDataReady(true);
       }
+      if (active && !loaded) {
+        // 该账号无本地缓存：重置为初始演示内容（游客或首次登录的干净起点）
+        setState({ places: initialPlaces, arrived: [], saved: [], removed: [] });
+        pending.current = [];
+      }
+      // 缓存就绪
+      if (active) setLoadedFor(authorId);
 
-      // 2) 云端共享留话；失败自动重试几次，成功则清掉失败提示。
-      //    不设一次性门控：即使启动时拉取失败，之后用户发帖仍会尝试上云。
-      const syncCloud = async (attempt: number): Promise<void> => {
-        try {
-          const remote = await fetchCloudPlaces();
-          if (!active) return;
-          cloudReady.current = true;
-          if (attempt > 0) setNotice('');
-          if (remote.length === 0) {
-            // 首次接入：把本机演示内容作为第一批共享数据写入云端
-            const seeds = stateRef.current.places;
-            void Promise.all(seeds.map(place => putCloudPlace(place))).catch(error => {
-              if (active) setNotice('初始化云端数据失败：' + cloudErrorMessage(error));
-            });
-            return;
-          }
-          const remoteIds = new Set(remote.map(place => place.id));
-          const localOnly = stateRef.current.places.filter(
-            place => place.id.startsWith('local-') && !remoteIds.has(place.id),
-          );
-          setState(current => ({
-            ...current,
-            places: [...remote.filter(place => !current.removed.includes(place.id)), ...localOnly],
-          }));
-        } catch (error) {
-          if (!active) return;
-          if (attempt < 3) {
-            // 指数退避重试：3s / 9s / 27s，覆盖启动时 tunnel 未稳或网络抖动
-            setTimeout(() => { void syncCloud(attempt + 1); }, 3000 * (3 ** attempt));
-            return;
-          }
-          setNotice('云端同步暂不可用，改动先留在本机：' + cloudErrorMessage(error));
+      // 2) 云端共享留话；失败自动重试（3s/9s/27s），成功清提示
+      const attempt = async (n: number): Promise<void> => {
+        const errorText = await syncCloud();
+        if (errorText === null) {
+          if (active) setNotice('');
+          return;
+        }
+        if (!active) return;
+        if (n < 3) {
+          setTimeout(() => { void attempt(n + 1); }, 3000 * (3 ** n));
+        } else {
+          setNotice('云端同步暂不可用，改动先留在本机：' + errorText);
         }
       };
-      void syncCloud(0);
+      void attempt(0);
     })();
     return () => { active = false; };
-  }, []);
+  }, [authorId, syncCloud]);
+
+  /** 手动下拉刷新：重拉云端。 */
+  const refresh = useCallback(async (): Promise<void> => {
+    if (refreshBusy.current) return;
+    refreshBusy.current = true;
+    // 刷新即活跃信号，顺带续期邀请码占用
+    void touch();
+    const errorText = await syncCloud();
+    refreshBusy.current = false;
+    if (errorText === null) {
+      setNotice('');
+    } else {
+      setNotice('云端同步暂不可用，改动先留在本机：' + errorText);
+    }
+  }, [syncCloud, touch]);
 
   useEffect(() => {
-    if (!dataReady) return;
+    if (!ready || !authorId) return;
+    const storageKey = cacheKey(authorId);
     const serialized = JSON.stringify(state);
-    writeQueue.current = writeQueue.current.then(() => AsyncStorage.setItem(key, serialized)).catch(() => {
+    writeQueue.current = writeQueue.current.then(() => AsyncStorage.setItem(storageKey, serialized)).catch(() => {
       setNotice('本机保存失败，关闭后这次修改可能丢失。');
     });
 
@@ -185,11 +226,14 @@ export function PlacesProvider({ children }: { children: React.ReactNode }) {
     ids.forEach(id => {
       const place = state.places.find(item => item.id === id);
       if (!place) return;
-      void putCloudPlace(place).catch(error => {
+      void putCloudPlace(place).then(() => {
+        // 发帖/接话/点赞成功即续期占用
+        void touch();
+      }).catch(error => {
         setNotice('云端保存失败，改动已留在本机：' + cloudErrorMessage(error));
       });
     });
-  }, [state, dataReady]);
+  }, [state, ready, authorId, touch]);
 
   function arrive(id: string) {
     setState(current => ({ ...current, arrived: [...new Set([...current.arrived, id])] }));
@@ -259,7 +303,7 @@ export function PlacesProvider({ children }: { children: React.ReactNode }) {
     return true;
   }
 
-  return <Context.Provider value={{ ...state, ready, notice, authorId, arrive, depart, save, like, reply, create, removePlace, removeReply }}>{children}</Context.Provider>;
+  return <Context.Provider value={{ ...state, ready, notice, authorId, arrive, depart, save, like, reply, create, removePlace, removeReply, refresh }}>{children}</Context.Provider>;
 }
 
 export function usePlaces() {

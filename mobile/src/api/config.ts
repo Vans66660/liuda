@@ -18,3 +18,12 @@ export const INVITE_COLLECTION = 'invite_codes';
 
 /** 地点留话集合（文档型数据库）。文档 _id 对应 Place.id */
 export const PLACES_COLLECTION = 'places';
+
+/** 账号资料集合（文档型数据库）。文档 _id 对应 authorId；字段 nickname, avatar, updatedAt */
+export const PROFILES_COLLECTION = 'profiles';
+
+/** 登录占用集合（文档型数据库）。文档 _id 对应 authorId；字段 deviceId, lastSeen */
+export const SESSIONS_COLLECTION = 'sessions';
+
+/** 邀请码占用有效期：lastSeen 超过该毫秒数视为设备已离线，允许其他设备登录。 */
+export const SESSION_TTL_MS = 10 * 60 * 1000;
