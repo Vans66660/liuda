@@ -60,7 +60,18 @@ export async function POST(request: Request) {
     if (payload.body !== undefined && method !== 'GET') {
       init.body = JSON.stringify(payload.body);
     }
-    const response = await fetch(`${DB_BASE}${payload.path}`, init);
+    // 网关偶发 socket hang up / 5xx，做一次简单重试提升真机成功率
+    let response: Response | null = null;
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        response = await fetch(`${DB_BASE}${payload.path}`, init);
+        if (response.status < 500) break;
+      } catch {
+        if (attempt === 1) throw new Error('network');
+      }
+      if (attempt === 0) await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    if (!response) throw new Error('network');
     const text = await response.text();
     // 原样把云端响应透传回手机：状态码 + 正文。
     return new Response(text, {

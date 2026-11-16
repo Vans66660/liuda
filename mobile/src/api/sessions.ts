@@ -10,6 +10,21 @@ import { SESSIONS_COLLECTION, SESSION_TTL_MS } from './config';
 export type SessionCheck = { ok: boolean; message: string };
 
 /**
+ * 解包 EJSON 数字。pgdoc 会把大整数存成 {"$numberLong":"..."}，
+ * 读取时必须还原成数字，否则 lastSeen 永远被判为 0。
+ */
+function unwrapNumber(value: unknown): number {
+  if (typeof value === 'number') return value;
+  if (value && typeof value === 'object') {
+    const box = value as Record<string, unknown>;
+    for (const key of ['$numberLong', '$numberInt', '$numberDouble', '$numberDecimal']) {
+      if (typeof box[key] === 'string' && Number.isFinite(Number(box[key]))) return Number(box[key]);
+    }
+  }
+  return NaN;
+}
+
+/**
  * 尝试占用某个邀请码对应的账号：
  * - 该码已被其他设备在有效期内占用 → 拒绝
  * - 无占用 / 已过期 / 同一设备 → 登记并放行
@@ -20,9 +35,9 @@ export async function tryOccupySession(authorId: string, deviceId: string): Prom
     const { data } = await collection(SESSIONS_COLLECTION).doc(authorId).get();
     const doc = Array.isArray(data) ? data[0] : data;
     if (doc && typeof doc === 'object') {
-      const lastSeen = Number.isFinite(doc.lastSeen) ? Number(doc.lastSeen) : 0;
+      const lastSeen = unwrapNumber(doc.lastSeen);
       const isOther = typeof doc.deviceId === 'string' && doc.deviceId !== deviceId;
-      if (isOther && Date.now() - lastSeen < SESSION_TTL_MS) {
+      if (isOther && Number.isFinite(lastSeen) && Date.now() - lastSeen < SESSION_TTL_MS) {
         return { ok: false, message: '此邀请码已在其他设备登录，请稍后再试' };
       }
     }
