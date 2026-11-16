@@ -14,7 +14,10 @@ import { CLOUDBASE_ENV_ID, CLOUDBASE_PUBLISHABLE_KEY } from '../../api/config';
  * 手机需能连到开发服务器（Expo Go + tunnel 已满足）。
  */
 
-const DB_BASE = `https://${CLOUDBASE_ENV_ID}.api.tcloudbasegateway.com/v1/database/instances/(default)/databases/(default)/collections`;
+// 注意：这里不带 /collections —— 前端传来的 path 已含该前缀（如
+// /collections/invite_codes/documents?...）。早期版本在这里多加了一段，
+// 导致路径变成 /collections/collections/... → 网关返回 invalid body json。
+const DB_BASE = `https://${CLOUDBASE_ENV_ID}.api.tcloudbasegateway.com/v1/database/instances/(default)/databases/(default)`;
 
 type Payload = {
   path: string;       // 例如 /invite_codes/documents?offset=0&limit=100
