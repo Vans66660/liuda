@@ -1,24 +1,21 @@
-import AsyncStorage from '@react-native-async-storage/async-storage';
-import { CLOUDBASE_ENV_ID } from './config';
+import { CLOUDBASE_ENV_ID, CLOUDBASE_PUBLISHABLE_KEY } from './config';
 
 /**
- * ── 纯 HTTP 实现 ──
+ * ── 纯 HTTP 实现（Publishable Key 鉴权）──
  *
- * @cloudbase/js-sdk v3 是浏览器/小程序环境 SDK，内部直接访问 localStorage、window 等
- * 浏览器 API，在 React Native 下会报 "property 'localStorage' doesn't exist"。
- * Expo Go 不能用原生模块，所以不能用 RN 适配器方案。
+ * @cloudbase/js-sdk v3 是浏览器/小程序 SDK，内部访问 localStorage/window，
+ * 在 React Native（Expo Go）下会报 "property 'localStorage' doesn't exist"。
+ * 匿名登录 HTTP 接口在免费体验版上又返回 LOGIN_TYPE_DISABLED（即使控制台已开启）。
  *
- * 这里直接用 fetch 调 CloudBase HTTP OpenAPI：
- *   - 匿名登录：POST /auth/v1/signin/anonymously
- *   - 数据库 CRUD：/api/v2/envs/{envId}/databases/{collection}/documents...
- *
- * Token 存在 AsyncStorage，不依赖 localStorage。
+ * 因此直接用 fetch 调 CloudBase v3 HTTP API，用 Publishable Key 鉴权：
+ *   - Publishable Key 是公开凭证（匿名角色），可安全放前端，无需登录
+ *   - 鉴权：Authorization: Bearer <publishable_key>
+ *   - host: https://{env}.api.tcloudbasegateway.com/v1
+ *   - 集合路径: /database/instances/(default)/databases/(default)/collections/{name}/documents
+ * 以上 host/路径/请求格式均按 @cloudbase/js-sdk v3 源码逐一实测验证过。
  */
 
-/** 数据库 OpenAPI 走通用域名。 */
-const API_BASE = 'https://tcb-api.tencentcloudapi.com';
-/** 认证 API 走 env + region 级域名（通用域名会返回 INVALID_HOST）。 */
-const AUTH_BASE = `https://${CLOUDBASE_ENV_ID}.ap-shanghai.tcb-api.tencentcloudapi.com`;
+const API_BASE = `https://${CLOUDBASE_ENV_ID}.api.tcloudbasegateway.com/v1/database/instances/(default)/databases/(default)/collections`;
 
 // ── 类型 ──
 
@@ -40,20 +37,8 @@ export type Collection = {
   add(payload: Record<string, unknown>): Promise<unknown>;
 };
 
-// ── Token 管理 ──
+// ── HTTP 请求封装 ──
 
-type Credentials = {
-  access_token: string;
-  refresh_token?: string;
-  expires_at?: number;
-};
-
-const TOKEN_KEY = 'cloudbase_token_v1';
-const DEVICE_KEY = 'cloudbase_device_id_v1';
-let cachedCred: Credentials | null = null;
-let cachedDeviceId: string | null = null;
-
-/** UUID v4（认证 API 的 x-device-id / x-request-id 必须是 UUID 格式）。 */
 function uuid(): string {
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
     const r = Math.floor(Math.random() * 16);
@@ -62,281 +47,143 @@ function uuid(): string {
   });
 }
 
-/** 设备 id 需要跨会话稳定：首次生成后写入 AsyncStorage。 */
-async function getDeviceId(): Promise<string> {
-  if (cachedDeviceId) return cachedDeviceId;
-  try {
-    const stored = await AsyncStorage.getItem(DEVICE_KEY);
-    if (stored) {
-      cachedDeviceId = stored;
-      return stored;
-    }
-  } catch { /* 落盘失败则用内存值 */ }
-  const id = uuid();
-  cachedDeviceId = id;
-  try { await AsyncStorage.setItem(DEVICE_KEY, id); } catch { /* ignore */ }
-  return id;
-}
-
-async function loadCred(): Promise<Credentials | null> {
-  if (cachedCred) {
-    if (cachedCred.expires_at && Date.now() > cachedCred.expires_at) {
-      cachedCred = null;
-    } else {
-      return cachedCred;
-    }
-  }
-  try {
-    const raw = await AsyncStorage.getItem(TOKEN_KEY);
-    if (!raw) return null;
-    const cred = JSON.parse(raw) as Credentials;
-    if (cred.expires_at && Date.now() > cred.expires_at) {
-      await AsyncStorage.removeItem(TOKEN_KEY);
-      return null;
-    }
-    cachedCred = cred;
-    return cred;
-  } catch {
-    return null;
-  }
-}
-
-async function saveCred(cred: Credentials): Promise<void> {
-  cachedCred = cred;
-  try {
-    await AsyncStorage.setItem(TOKEN_KEY, JSON.stringify(cred));
-  } catch {
-    // 落盘失败不影响本次会话使用
-  }
-}
-
-// ── 匿名登录 ──
-
-/**
- * 团队内部版不接短信、不做注册：用匿名登录建立真实会话，
- * 让文档型集合的读写带上身份。匿名登录需先在控制台开启。
- */
-export async function ensureSignedIn(): Promise<void> {
-  const existing = await loadCred();
-  if (existing) return;
-
-  const resp = await fetch(`${AUTH_BASE}/auth/v1/signin/anonymously`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-device-id': await getDeviceId(),
-      'x-request-id': uuid(),
-    },
-    body: JSON.stringify({}),
-  });
-
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => '');
-    if (/LOGIN_TYPE_DISABLED|login_type_disabled|开启匿名登录/i.test(text)) {
-      throw new Error('当前环境未开启匿名登录：请在云开发控制台「身份认证 → 登录方式」开启「匿名登录」');
-    }
-    throw new Error(`匿名登录失败 (${resp.status}): ${text.slice(0, 200)}`);
-  }
-
-  const body = await resp.json();
-  // 响应格式：{ statusCode: 200, data: { access_token, refresh_token, expires_in, ... } }
-  const data = body?.data ?? body;
-  const accessToken = data?.access_token;
-  if (!accessToken) {
-    throw new Error(`匿名登录返回异常: ${JSON.stringify(body).slice(0, 300)}`);
-  }
-
-  const expiresIn: number | undefined = data?.expires_in;
-  await saveCred({
-    access_token: accessToken,
-    refresh_token: data?.refresh_token,
-    expires_at: expiresIn ? Date.now() + (expiresIn - 30) * 1000 : undefined,
-  });
-}
-
-// ── HTTP 请求封装 ──
-
-async function authedFetch(path: string, init: RequestInit = {}): Promise<any> {
-  const cred = await loadCred();
-  if (!cred) {
-    throw new Error('未登录：请先调用 ensureSignedIn()');
-  }
-
+/** 所有请求共用 Publishable Key 作为 Bearer token，无需登录/刷新。 */
+async function apiFetch(path: string, init: RequestInit = {}): Promise<any> {
   const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    Authorization: `Bearer ${cred.access_token}`,
+    Authorization: `Bearer ${CLOUDBASE_PUBLISHABLE_KEY}`,
+    'Content-Type': 'application/json; charset=utf-8',
+    'X-Request-Id': uuid(),
     ...((init.headers as Record<string, string>) || {}),
   };
-
   const resp = await fetch(`${API_BASE}${path}`, { ...init, headers });
+  const text = await resp.text();
+  let body: any;
+  try { body = text ? JSON.parse(text) : {}; } catch { body = { message: text }; }
 
-  if (resp.status === 401) {
-    // Token 过期，清除后重试一次
-    cachedCred = null;
-    try { await AsyncStorage.removeItem(TOKEN_KEY); } catch { /* ignore */ }
-    await ensureSignedIn();
-    const newCred = await loadCred();
-    if (!newCred) throw new Error('重新登录失败');
-    headers.Authorization = `Bearer ${newCred.access_token}`;
-    const retry = await fetch(`${API_BASE}${path}`, { ...init, headers });
-    if (!retry.ok) {
-      const text = await retry.text().catch(() => '');
-      throw new Error(`云端请求失败 (${retry.status}): ${text.slice(0, 200)}`);
-    }
-    return retry.json();
+  if (!resp.ok || body?.code || body?.Error) {
+    const code = body?.code ?? body?.Error?.Code ?? resp.status;
+    const message = body?.message ?? body?.Error?.Message ?? text ?? '云端请求失败';
+    throw new Error(`[${code}] ${message}`);
   }
-
-  if (!resp.ok) {
-    const text = await resp.text().catch(() => '');
-    throw new Error(`云端请求失败 (${resp.status}): ${text.slice(0, 200)}`);
-  }
-
-  return resp.json();
+  return body;
 }
 
 // ── 数据库操作 ──
 
-function dbPath(collection: string): string {
-  return `/api/v2/envs/${CLOUDBASE_ENV_ID}/databases/${collection}/documents`;
-}
-
 /**
- * 创建 Collection 句柄。接口签名与之前 SDK 版本完全一致，
- * places.ts 和 invite.ts 不需要改动。
+ * 创建 Collection 句柄。接口签名与 SDK 版完全一致，
+ * places.ts / invite.ts 不需要改动。
  */
 export function collection(name: string): Collection {
-  const basePath = dbPath(name);
+  const base = `/collections/${name}`;
 
   return {
-    // 查询全部 / 限制数量
+    /** 查询文档列表：GET .../documents?offset&limit&query */
     limit(n: number): LimitQuery {
       return {
         async get(): Promise<QueryResult> {
-          const path = `${basePath}?limit=${n}`;
-          const body = await authedFetch(path);
-          const list = parseDocList(body);
-          return { data: list };
+          const body = await apiFetch(`${base}/documents?offset=0&limit=${n}`);
+          return { data: parseDocList(body) };
         },
       };
     },
 
-    // 条件查询
+    /** 条件查询：GET .../documents?offset&limit&query=<json> */
     where(cond: Record<string, unknown>): WhereQuery {
       return {
         limit(n: number): LimitQuery {
           return {
             async get(): Promise<QueryResult> {
-              const path = `${basePath}:find?limit=${n}&skip=0&fields=${encodeURIComponent('{}')}&sort=${encodeURIComponent('{}')}`;
-              const body = await authedFetch(path, {
-                method: 'POST',
-                body: JSON.stringify({ query: JSON.stringify(cond) }),
-              });
-              const list = parseDocList(body);
-              return { data: list };
+              const query = encodeURIComponent(JSON.stringify(cond));
+              const body = await apiFetch(`${base}/documents?offset=0&limit=${n}&query=${query}`);
+              return { data: parseDocList(body) };
             },
           };
         },
       };
     },
 
-    // 查询全部
+    /** 查询全部（默认 100 条） */
     async get(): Promise<QueryResult> {
-      const path = `${basePath}?limit=100`;
-      const body = await authedFetch(path);
-      const list = parseDocList(body);
-      return { data: list };
+      const body = await apiFetch(`${base}/documents?offset=0&limit=100`);
+      return { data: parseDocList(body) };
     },
 
-    // 单文档操作
+    /** 单文档操作 */
     doc(id: string): DocRef {
-      const docPath = `${basePath}/${id}`;
       return {
         async get(): Promise<{ data: Doc | Doc[] }> {
-          const body = await authedFetch(docPath);
-          const list = parseDocList(body);
-          return { data: list.length > 0 ? list[0] : list };
+          const body = await apiFetch(`${base}/documents/${encodeURIComponent(id)}`);
+          // 单文档响应直接是文档对象
+          return { data: body as Doc };
         },
 
+        /**
+         * upsert 写入：PATCH .../documents
+         * query 用 _id 定位；data 里不含 _id（含 _id 会被拒：Invalid Key Name: _id）
+         */
         async set(payload: Record<string, unknown>): Promise<unknown> {
-          // OpenAPI setDocument: PUT 或 POST update
-          // 使用 POST /api/v2/envs/{envId}/databases/{collection}/documents/{docId}
-          // 带 upsert 语义（set 不存在则创建）
-          const body = await authedFetch(docPath, {
-            method: 'PUT',
-            body: JSON.stringify({ data: JSON.stringify(payload) }),
+          const body = await apiFetch(`${base}/documents`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+              query: { _id: id },
+              data: payload,
+              upsert: true,
+              replaceMode: true,
+            }),
           });
           return body;
         },
 
+        /** 删除：POST .../documents/remove */
         async remove(): Promise<unknown> {
-          const body = await authedFetch(docPath, { method: 'DELETE' });
+          const body = await apiFetch(`${base}/documents/remove`, {
+            method: 'POST',
+            body: JSON.stringify({ query: { _id: id } }),
+          });
           return body;
         },
       };
     },
 
-    // 新增文档
+    /** 新增文档：POST .../documents */
     async add(payload: Record<string, unknown>): Promise<unknown> {
-      const body = await authedFetch(basePath, {
+      const body = await apiFetch(`${base}/documents`, {
         method: 'POST',
-        body: JSON.stringify({ data: JSON.stringify(payload) }),
+        body: JSON.stringify({ data: payload }),
       });
       return body;
     },
   };
 }
 
-// ── 响应解析 ──
-
 /**
- * CloudBase OpenAPI 返回的文档列表有几种可能的格式：
- * 1. { statusCode: 200, data: { list: ["ejson_str", ...], offset, limit } }
- * 2. { statusCode: 200, data: [{...}, ...] }
- * 3. { statusCode: 200, data: { data: [...] } }
- *
- * pgdoc 模式下文档通常是普通 JSON（不需要 EJSON 反序列化）。
+ * 列表响应格式：{ offset, limit, list: [{_id, ...}, ...] }
+ * 文档是普通 JSON（pgdoc 模式下无需 EJSON 反序列化）。
  */
 function parseDocList(body: any): Doc[] {
   if (!body) return [];
-  const data = body.data ?? body;
-
-  // 格式 1: { list: [...] }
-  if (data?.list && Array.isArray(data.list)) {
-    return data.list.map((item: any) => {
-      if (typeof item === 'string') {
-        try { return JSON.parse(item) as Doc; } catch { return { _id: item } as Doc; }
-      }
-      return item as Doc;
-    });
-  }
-
-  // 格式 2: 直接是数组
-  if (Array.isArray(data)) {
-    return data as Doc[];
-  }
-
-  // 格式 3: { data: [...] }
-  if (data?.data && Array.isArray(data.data)) {
-    return data.data as Doc[];
-  }
-
-  // 单文档: 直接是对象
-  if (typeof data === 'object' && data !== null) {
-    return [data as Doc];
-  }
-
+  if (Array.isArray(body?.list)) return body.list as Doc[];
+  if (Array.isArray(body)) return body as Doc[];
+  if (Array.isArray(body?.data?.list)) return body.data.list as Doc[];
+  if (Array.isArray(body?.data)) return body.data as Doc[];
+  if (typeof body === 'object' && body !== null && body._id) return [body as Doc];
   return [];
 }
 
-// ── 错误消息 ──
+/** 保留导出，places.tsx 里 import 了它；Publishable Key 方案下无需额外登录。 */
+export async function ensureSignedIn(): Promise<void> {
+  // no-op：Publishable Key 直接鉴权，不需要登录态
+}
 
+/** 把云端错误翻译成可操作的提示。 */
 export function cloudErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error ?? '');
-  if (/permission|denied|403|401|not\s*authorized/i.test(message)) {
-    return '云端权限不足，请检查集合权限与匿名登录开关';
+  if (/permission|denied|403|401|not\s*authorized|INVALID_ACCESS_TOKEN/i.test(message)) {
+    return '云端权限不足，请检查集合权限与 Publishable Key';
   }
   if (/network|fetch|timeout|failed|econn/i.test(message)) {
-    return '连接云端失败，请检查网络与 EnvId';
+    return '连接云端失败，请检查网络';
   }
   return message || '云端请求失败';
 }
