@@ -15,7 +15,10 @@ import { CLOUDBASE_ENV_ID } from './config';
  * Token 存在 AsyncStorage，不依赖 localStorage。
  */
 
+/** 数据库 OpenAPI 走通用域名。 */
 const API_BASE = 'https://tcb-api.tencentcloudapi.com';
+/** 认证 API 走 env + region 级域名（通用域名会返回 INVALID_HOST）。 */
+const AUTH_BASE = `https://${CLOUDBASE_ENV_ID}.ap-shanghai.tcb-api.tencentcloudapi.com`;
 
 // ── 类型 ──
 
@@ -46,7 +49,34 @@ type Credentials = {
 };
 
 const TOKEN_KEY = 'cloudbase_token_v1';
+const DEVICE_KEY = 'cloudbase_device_id_v1';
 let cachedCred: Credentials | null = null;
+let cachedDeviceId: string | null = null;
+
+/** UUID v4（认证 API 的 x-device-id / x-request-id 必须是 UUID 格式）。 */
+function uuid(): string {
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.floor(Math.random() * 16);
+    const v = c === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
+/** 设备 id 需要跨会话稳定：首次生成后写入 AsyncStorage。 */
+async function getDeviceId(): Promise<string> {
+  if (cachedDeviceId) return cachedDeviceId;
+  try {
+    const stored = await AsyncStorage.getItem(DEVICE_KEY);
+    if (stored) {
+      cachedDeviceId = stored;
+      return stored;
+    }
+  } catch { /* 落盘失败则用内存值 */ }
+  const id = uuid();
+  cachedDeviceId = id;
+  try { await AsyncStorage.setItem(DEVICE_KEY, id); } catch { /* ignore */ }
+  return id;
+}
 
 async function loadCred(): Promise<Credentials | null> {
   if (cachedCred) {
@@ -90,17 +120,21 @@ export async function ensureSignedIn(): Promise<void> {
   const existing = await loadCred();
   if (existing) return;
 
-  const resp = await fetch(`${API_BASE}/auth/v1/signin/anonymously`, {
+  const resp = await fetch(`${AUTH_BASE}/auth/v1/signin/anonymously`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      'X-SDK-Version': 'liuda-http/1.0',
+      'x-device-id': await getDeviceId(),
+      'x-request-id': uuid(),
     },
-    body: JSON.stringify({ envId: CLOUDBASE_ENV_ID }),
+    body: JSON.stringify({}),
   });
 
   if (!resp.ok) {
     const text = await resp.text().catch(() => '');
+    if (/LOGIN_TYPE_DISABLED|login_type_disabled|开启匿名登录/i.test(text)) {
+      throw new Error('当前环境未开启匿名登录：请在云开发控制台「身份认证 → 登录方式」开启「匿名登录」');
+    }
     throw new Error(`匿名登录失败 (${resp.status}): ${text.slice(0, 200)}`);
   }
 
